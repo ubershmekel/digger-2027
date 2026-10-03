@@ -2,7 +2,7 @@
 // everything else becomes a UI action.
 import type { Key } from '../sim/input';
 
-export type UiAction = 'pause' | 'skip' | 'toggleGraphics' | 'mute' | 'confirm' | 'back';
+export type UiAction = 'pause' | 'skip' | 'toggleGraphics' | 'toggleSound' | 'mute' | 'confirm' | 'back';
 
 export interface ControlsTarget {
   press(k: Key): void;
@@ -48,9 +48,9 @@ export class Controls {
     // Typing into a text field (initials) is never a game or shortcut key.
     if (e.target instanceof HTMLInputElement && e.target.type != 'range') return;
     const k = KEYMAP[e.code];
-    if (e.code == 'F2') {
+    if (e.code == 'F2' || e.code == 'F3') {
       e.preventDefault();
-      if (!e.repeat) this.t.action('toggleGraphics');
+      if (!e.repeat) this.t.action(e.code == 'F2' ? 'toggleGraphics' : 'toggleSound');
       return;
     }
     if (e.code == 'Escape' || e.code == 'KeyP' || e.code == 'Pause') {

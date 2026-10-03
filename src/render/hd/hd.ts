@@ -21,12 +21,14 @@ import {
   makeDigger,
   makeGold,
   makeGrave,
-  makeMonster,
+  makeHobbin,
+  makeNobbin,
   type BagModel,
   type DiggerModel,
   type GoldModel,
   type Materials,
-  type MonsterModel,
+  type HobbinModel,
+  type NobbinModel,
 } from './models';
 import { Coins, Particles, Popups } from './fx';
 import { glowTexture, sparkleTexture } from './textures';
@@ -49,8 +51,10 @@ const qFlip = new THREE.Quaternion().setFromAxisAngle(zAxis, Math.PI);
 const damp = (a: number, b: number, k: number, dt: number) => b + (a - b) * Math.exp(-k * dt);
 
 interface MonsterState {
-  m: MonsterModel;
-  hob: number;
+  nob: NobbinModel;
+  hob: HobbinModel;
+  /** 0 = Nobbin, 1 = Hobbin; animated through a squash-and-pop morph. */
+  morph: number;
   face: number;
   wasOn: boolean;
   squash: number;
@@ -89,6 +93,7 @@ export class HdRenderer implements Renderer {
   private digger: DiggerModel;
   private diggerQ = new THREE.Quaternion();
   private lastH: 0 | 4 = 0;
+  private hoopUp = 1;
   private diggerWasOn = false;
   private grave: THREE.Group;
   private monsters: MonsterState[] = [];
@@ -183,10 +188,11 @@ export class HdRenderer implements Renderer {
     this.scene.add(this.grave);
 
     for (let i = 0; i < 6; i++) {
-      const m = makeMonster(this.mats);
-      m.root.visible = false;
-      this.scene.add(m.root);
-      this.monsters.push({ m, hob: 0, face: 0, wasOn: false, squash: 0, lastX: 0, phase: Math.random() * 6, blink: 2 + Math.random() * 3 });
+      const nob = makeNobbin(this.mats);
+      const hob = makeHobbin(this.mats);
+      nob.root.visible = hob.root.visible = false;
+      this.scene.add(nob.root, hob.root);
+      this.monsters.push({ nob, hob, morph: 0, face: 1, wasOn: false, squash: 0, lastX: 0, phase: Math.random() * 6, blink: 2 + Math.random() * 3 });
     }
     for (let i = 0; i < 7; i++) {
       const bag = makeBag(this.mats);
@@ -513,17 +519,29 @@ export class HdRenderer implements Renderer {
     d.body.quaternion.copy(this.diggerQ);
 
     const moving = moved > 0.002 && !f.paused;
-    const spin = moving ? 26 : 3;
     if (!f.paused) {
-      d.drill.rotation.x += spin * dt;
+      d.spinner.rotation.x += (moving ? 28 : 16) * dt;
       for (const w of d.wheels) w.rotation.z -= (moving ? 9 : 0) * dt;
     }
-    // Engine rumble.
-    d.body.position.y = moving ? Math.sin(f.time * 60) * 0.015 : 0;
+    // The original's sprite cycles its scoop in and out every tick, even standing still;
+    // here the drill pumps on its piston with the same three frames.
+    const frame = (ch - 1) % 3;
+    const pumpTarget = 0.62 - frame * 0.13;
+    d.drill.position.x = damp(d.drill.position.x, pumpTarget, 30, dt);
+    // Engine rumble, stronger while driving.
+    d.body.position.y = Math.sin(f.time * (moving ? 60 : 38)) * (moving ? 0.018 : 0.01);
 
-    // Fire-ready beacon: bright green when ready, dim red while recharging.
+    // Ready to fire: the yellow hoop stands tall and glows, as on the CGA sprite;
+    // while recharging it sinks into the cab and dims.
     const recharge = g.digger.rechargetime;
     const total = g.main.levof10() * 3 + 60;
+    const up = ready ? 1 : 0;
+    this.hoopUp = damp(this.hoopUp, up, ready ? 14 : 8, dt);
+    const pop = ready ? 1 + Math.max(0, Math.sin(Math.min(1, this.hoopUp) * Math.PI)) * 0.25 : 1;
+    d.hoop.scale.set(pop, 0.3 + this.hoopUp * 0.95 * pop, pop);
+    d.hoop.position.y = 0.42 + this.hoopUp * 0.13;
+    d.hoopMat.emissiveIntensity = ready ? 0.8 + Math.sin(f.time * 7) * 0.3 : 0.05;
+    d.hoopMat.color.set(ready ? 0xffd040 : 0x8a6a20);
     if (ready) {
       d.beaconMat.color.set(0x3cff9a);
       d.beaconMat.emissive.set(0x3cff9a);
@@ -570,9 +588,9 @@ export class HdRenderer implements Renderer {
       const slot = 8 + i;
       const on = g.sprite.sprenf[slot];
       const ch = g.sprite.sprch[slot];
-      const m = st.m;
+      const { nob, hob } = st;
       if (!on || ch < 69 || ch > 80) {
-        m.root.visible = false;
+        nob.root.visible = hob.root.visible = false;
         st.wasOn = false;
         continue;
       }
@@ -581,65 +599,77 @@ export class HdRenderer implements Renderer {
       const y = spriteCy(sy);
       const hobbin = ch >= 73;
       const dying = ch == 72 || ch == 76 || ch == 80;
-      const faceDir = ch >= 77 ? -1 : ch >= 73 ? 1 : 0;
       if (!st.wasOn) {
-        st.hob = hobbin ? 1 : 0;
+        st.morph = hobbin ? 1 : 0;
         st.lastX = x;
         st.squash = 0;
       }
       st.wasOn = true;
-      m.root.visible = true;
       const vx = (x - st.lastX) / Math.max(dt, 1e-3);
       st.lastX = x;
-      const moving = Math.abs(vx) > 0.05 || Math.abs(y - m.root.position.y) > 0.002;
-      m.root.position.set(x, y, ACTOR_Z);
-      st.hob = damp(st.hob, hobbin ? 1 : 0, 6, dt);
+      const moving = Math.abs(vx) > 0.05 || Math.abs(y - (hobbin ? hob.root.position.y : nob.root.position.y)) > 0.002;
+      const was = st.morph;
+      st.morph = damp(st.morph, hobbin ? 1 : 0, 9, dt);
+      // A puff of smoke as it changes form.
+      if (!f.paused && (was < 0.5) != (st.morph < 0.5))
+        this.dust.emit({ x, y, z: ACTOR_Z + 0.3, count: 22, color: 0xb6ff9e, color2: 0x2a7a2a, speed: 3.5, life: 0.6, size: 0.7, drag: 3 });
       st.squash = damp(st.squash, dying ? 1 : 0, 18, dt);
-      const travel = faceDir != 0 ? faceDir : Math.sign(vx) || st.face;
-      st.face = damp(st.face, travel, 8, dt);
-      if (!f.paused) st.phase += dt * (moving ? 12 : 3);
-
-      // Body: jelly bounce, squashed flat when crushed.
-      const bounce = Math.sin(st.phase) * 0.06;
+      const faceDir = ch >= 77 ? -1 : ch >= 73 ? 1 : 0;
+      if (faceDir) st.face = faceDir;
+      else if (Math.abs(vx) > 0.05) st.face = Math.sign(vx);
+      if (!f.paused) st.phase += dt * (moving ? 13 : 3);
       const sq = st.squash;
-      m.body.scale.set(1 + bounce * 0.5 + sq * 0.45, 1 - bounce - sq * 0.62, 1 + bounce * 0.5 + sq * 0.3);
-      m.body.position.y = -sq * 0.3;
-      m.root.rotation.y = st.face * 0.45;
-      m.root.rotation.z = -st.face * 0.08 * (moving ? 1 : 0);
-      m.face.position.y = -sq * 0.45;
-      m.face.scale.setScalar(1 - sq * 0.25);
-      for (let k = 0; k < 2; k++) {
-        m.feet[k].position.y = -0.42 + Math.max(0, Math.sin(st.phase + k * Math.PI)) * 0.1 * (moving ? 1 : 0.2);
-        m.feet[k].visible = sq < 0.6;
+      const bounce = Math.sin(st.phase * 2) * 0.05 * (moving ? 1 : 0.4);
+      // Morph: one form shrinks away as the other pops in.
+      const nobScale = Math.max(0, 1 - st.morph * 2);
+      const hobScale = Math.max(0, st.morph * 2 - 1);
+      const scared = g.digger.bonusmode;
+      const tint = (mat: THREE.MeshPhysicalMaterial, base: number) => {
+        const c = new THREE.Color(base);
+        if (scared) c.lerp(new THREE.Color(0x7fb6ff), 0.45 + Math.sin(f.time * 10) * 0.1);
+        mat.color.lerp(c, 1 - Math.exp(-10 * dt));
+      };
+
+      // --- Nobbin: front-on, two yellow eyes, red legs stepping wide ---
+      nob.root.visible = nobScale > 0.01;
+      if (nob.root.visible) {
+        nob.root.position.set(x, y, ACTOR_Z);
+        nob.root.scale.set(nobScale * (1 + sq * 0.45), nobScale * (1 - sq * 0.62), nobScale);
+        nob.root.rotation.y = st.face * 0.3;
+        nob.body.scale.set(1 + bounce, 1 - bounce, 1 + bounce);
+        for (let k = 0; k < 2; k++) {
+          const side = k == 0 ? -1 : 1;
+          const step = Math.sin(st.phase + k * Math.PI);
+          nob.legs[k].rotation.z = side * 0.45 + step * 0.35 * (moving ? 1 : 0.15);
+          nob.legs[k].position.y = -0.25 + Math.max(0, step) * 0.05 * (moving ? 1 : 0);
+        }
+        const lx = THREE.MathUtils.clamp((dx - x) * 0.03, -0.06, 0.06);
+        const ly = THREE.MathUtils.clamp((dy - y) * 0.03, -0.05, 0.05);
+        for (const p of nob.pupils) p.position.set(lx, ly, 0.21 * 0.78);
+        st.blink -= dt;
+        if (st.blink < -0.12) st.blink = 2 + Math.random() * 4;
+        const lid = Math.max(sq, st.blink < 0 ? 1 : 0, scared ? 0.5 : 0);
+        for (const l of nob.lids) l.rotation.x = -1.6 + lid * 1.45;
+        for (let k = 0; k < 2; k++) nob.eyes[k].position.y = 0.36 + Math.sin(st.phase * 2 + k) * 0.02;
+        tint(nob.bodyMat, 0x2fae36);
       }
-      // Eyes track the Digger; lids close when squashed, worried in bonus mode.
-      const lx = THREE.MathUtils.clamp((dx - x) * 0.04, -0.07, 0.07);
-      const ly = THREE.MathUtils.clamp((dy - y) * 0.04, -0.06, 0.05);
-      for (let k = 0; k < 2; k++) {
-        const side = k == 0 ? -1 : 1;
-        m.pupils[k].position.set(side * 0.2 + lx, 0.18 + ly, 0.6);
+
+      // --- Hobbin: side-on, chomping red jaws, facing its travel direction ---
+      hob.root.visible = hobScale > 0.01;
+      if (hob.root.visible) {
+        hob.root.position.set(x, y, ACTOR_Z);
+        hob.root.scale.set(hobScale * (1 + sq * 0.45), hobScale * (1 - sq * 0.62), hobScale);
+        const targetYaw = st.face > 0 ? -0.35 : Math.PI + 0.35;
+        hob.facing.rotation.y = damp(hob.facing.rotation.y, targetYaw, 14, dt);
+        const chomp = dying ? 0.05 : (Math.sin(st.phase * 1.4) * 0.5 + 0.5) * 0.55 + 0.1;
+        hob.upperJaw.rotation.z = chomp * 0.6;
+        hob.lowerJaw.rotation.z = -chomp * 0.6;
+        hob.body.scale.set(1 + bounce, 1 - bounce, 1);
+        for (let k = 0; k < 2; k++) hob.legs[k].rotation.z = Math.sin(st.phase + k * Math.PI) * 0.6 * (moving ? 1 : 0.1);
+        tint(hob.bodyMat, 0x249a3a);
+        if (moving && this.terrain.changed && !dying && !f.paused)
+          this.dust.emit({ x: x + st.face * 0.7, y, z: ACTOR_Z + 0.5, count: 2, color: this.theme?.light ?? 0x9a6a3a, color2: this.theme?.dark ?? 0x4a2a10, speed: 2, life: 0.5, size: 0.3, gravity: 9, drag: 1 });
       }
-      st.blink -= dt;
-      if (st.blink < -0.12) st.blink = 2 + Math.random() * 4;
-      const scared = g.digger.bonusmode ? 0.55 : 0;
-      const lid = Math.max(sq, st.blink < 0 ? 1 : 0, scared, st.hob * 0.3);
-      for (const l of m.lids) l.rotation.x = -1.6 + lid * 1.4;
-      // Hobbin transformation: arms grow out, the mouth widens into a toothy grin.
-      const h = st.hob;
-      for (let k = 0; k < 2; k++) {
-        const arm = m.arms[k];
-        arm.visible = h > 0.02;
-        arm.scale.setScalar(h);
-        arm.rotation.z = Math.sin(st.phase * 1.3 + k * Math.PI) * 0.5 * h;
-      }
-      m.mouth.scale.set(0.6 + h * 0.6, 0.5 + h * 0.9, 1);
-      m.mouth.visible = sq < 0.5;
-      const col = hobbin ? new THREE.Color(0x249a3a) : new THREE.Color(0x2fae36);
-      if (g.digger.bonusmode) col.lerp(new THREE.Color(0x7fb6ff), 0.45 + Math.sin(f.time * 10) * 0.1);
-      m.bodyMat.color.lerp(col, 1 - Math.exp(-10 * dt));
-      // Hobbins kick up dirt when tunnelling.
-      if (hobbin && moving && this.terrain.changed && !dying)
-        this.dust.emit({ x: x + st.face * 0.7, y, z: ACTOR_Z + 0.5, count: 2, color: this.theme?.light ?? 0x9a6a3a, color2: this.theme?.dark ?? 0x4a2a10, speed: 2, life: 0.5, size: 0.3, gravity: 9, drag: 1 });
     }
   }
 

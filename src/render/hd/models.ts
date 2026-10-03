@@ -28,8 +28,14 @@ export interface DiggerModel {
   root: THREE.Group;
   /** Rotates to face the travel direction. */
   body: THREE.Group;
+  /** The green front drill: slides in and out like the original's scoop frames. */
   drill: THREE.Object3D;
+  /** Spins inside `drill`. */
+  spinner: THREE.Object3D;
   wheels: THREE.Object3D[];
+  /** The yellow hoop on top: raised tall when the weapon is ready, lowered while recharging. */
+  hoop: THREE.Object3D;
+  hoopMat: THREE.MeshStandardMaterial;
   beacon: THREE.Mesh;
   beaconMat: THREE.MeshStandardMaterial;
   lampMat: THREE.MeshStandardMaterial;
@@ -83,10 +89,10 @@ export function makeDigger(m: Materials): DiggerModel {
   // "Ready to fire" beacon
   const beaconMat = std({ color: 0x3cff9a, emissive: 0x3cff9a, emissiveIntensity: 2.5, roughness: 0.2 });
   const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.075, 16, 12), beaconMat);
-  beacon.position.set(-0.38, 0.62, 0);
+  beacon.position.set(-0.52, 0.62, 0.2);
   body.add(beacon);
   const beaconBase = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.08, 0.06, 12), steel);
-  beaconBase.position.set(-0.38, 0.57, 0);
+  beaconBase.position.set(-0.52, 0.57, 0.2);
   body.add(beaconBase);
 
   // Exhaust stack
@@ -113,12 +119,15 @@ export function makeDigger(m: Materials): DiggerModel {
     }
   }
 
-  // Drill: a polished cone with a helical flute
+  // The front drill, painted green like the original's scoop, with a brass flute.
+  const greenPaint = phys({ color: 0x3fbf3a, roughness: 0.3, metalness: 0.45, clearcoat: 0.8, envMap: m.env, envMapIntensity: 1 });
   const drill = new THREE.Group();
-  const cone = new THREE.Mesh(new THREE.ConeGeometry(0.3, 0.62, 24, 1), steel);
+  const spinner = new THREE.Group();
+  drill.add(spinner);
+  const cone = new THREE.Mesh(new THREE.ConeGeometry(0.3, 0.62, 24, 1), greenPaint);
   cone.rotation.z = -Math.PI / 2;
   cone.position.x = 0.31;
-  drill.add(cone);
+  spinner.add(cone);
   const pts: THREE.Vector3[] = [];
   for (let i = 0; i <= 80; i++) {
     const t = i / 80;
@@ -127,133 +136,202 @@ export function makeDigger(m: Materials): DiggerModel {
     pts.push(new THREE.Vector3(t * 0.6, Math.cos(a) * r, Math.sin(a) * r));
   }
   const flute = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 120, 0.028, 6), brass);
-  drill.add(flute);
-  const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.33, 0.33, 0.1, 24), brass);
+  spinner.add(flute);
+  const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.33, 0.33, 0.1, 24), greenPaint);
   collar.rotation.z = Math.PI / 2;
-  drill.add(collar);
+  spinner.add(collar);
+  // Piston the drill slides on.
+  const piston = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.5, 12), steel);
+  piston.rotation.z = Math.PI / 2;
+  piston.position.x = -0.2;
+  drill.add(piston);
   drill.position.set(0.52, -0.05, 0);
   body.add(drill);
 
+  // The "ready" hoop: a big yellow arch on the cab roof, as on the CGA sprite.
+  const hoopMat = std({ color: 0xffc83a, emissive: 0xffb020, emissiveIntensity: 0.6, roughness: 0.3, metalness: 0.3, envMap: m.env });
+  const hoop = new THREE.Group();
+  const arch = new THREE.Mesh(new THREE.TorusGeometry(0.17, 0.045, 10, 28, Math.PI), hoopMat);
+  arch.position.y = 0.16;
+  hoop.add(arch);
+  for (const sx of [-0.17, 0.17]) {
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.16, 10), hoopMat);
+    post.position.set(sx, 0.08, 0);
+    hoop.add(post);
+  }
+  hoop.position.set(-0.28, 0.55, 0);
+  body.add(hoop);
+
   shadow(root);
-  return { root, body, drill, wheels, beacon, beaconMat, lampMat, lampAnchor, paint };
+  return { root, body, drill, spinner, wheels, hoop, hoopMat, beacon, beaconMat, lampMat, lampAnchor, paint };
 }
 
 // -----------------------------------------------------------------------------
 // Nobbin / Hobbin
+//
+// From the CGA sprites: a Nobbin is a green body with two big yellow eyes on
+// top and red legs planted wide. A Hobbin is seen side-on: a spiky green body,
+// one yellow eye and big red jaws gaping in the direction it travels.
 
-export interface MonsterModel {
+function monsterMats(m: Materials) {
+  return {
+    green: phys({ color: 0x2fae36, roughness: 0.32, clearcoat: 0.8, clearcoatRoughness: 0.2, sheen: 0.25, sheenColor: new THREE.Color(0x3a8a30), emissive: 0x041a04, envMap: m.env, envMapIntensity: 0.35 }),
+    yellow: phys({ color: 0xffd23a, roughness: 0.2, clearcoat: 1, emissive: 0x2a1c00, envMap: m.env, envMapIntensity: 0.5 }),
+    black: std({ color: 0x0a0a0c, roughness: 0.25 }),
+    red: phys({ color: 0xd8321e, roughness: 0.35, clearcoat: 0.6, envMap: m.env, envMapIntensity: 0.4 }),
+    lid: phys({ color: 0x228a2c, roughness: 0.35, clearcoat: 0.8 }),
+    tooth: std({ color: 0xfff8e8, roughness: 0.4 }),
+    mouth: std({ color: 0x3a0608, roughness: 0.7 }),
+  };
+}
+
+type MonsterMats = ReturnType<typeof monsterMats>;
+
+function eye(mat: MonsterMats, r: number): { g: THREE.Group; pupil: THREE.Mesh; lid: THREE.Mesh } {
+  const g = new THREE.Group();
+  g.add(new THREE.Mesh(new THREE.SphereGeometry(r, 24, 18), mat.yellow));
+  const pupil = new THREE.Mesh(new THREE.SphereGeometry(r * 0.42, 16, 12), mat.black);
+  pupil.position.z = r * 0.78;
+  g.add(pupil);
+  const lid = new THREE.Mesh(new THREE.SphereGeometry(r * 1.06, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2), mat.lid);
+  lid.rotation.x = -1.6;
+  g.add(lid);
+  return { g, pupil, lid };
+}
+
+function leg(mat: MonsterMats, len: number, splay: number): THREE.Group {
+  const g = new THREE.Group();
+  const shin = new THREE.Mesh(new THREE.CapsuleGeometry(0.075, len, 6, 10), mat.red);
+  shin.position.y = -len / 2;
+  g.add(shin);
+  const foot = new THREE.Mesh(new THREE.SphereGeometry(0.13, 16, 10), mat.red);
+  foot.scale.set(1.5, 0.55, 1.1);
+  foot.position.set(splay * 0.08, -len - 0.06, 0.05);
+  g.add(foot);
+  g.rotation.z = splay * 0.45;
+  return g;
+}
+
+export interface NobbinModel {
   root: THREE.Group;
   body: THREE.Mesh;
   bodyMat: THREE.MeshPhysicalMaterial;
-  face: THREE.Group;
+  eyes: THREE.Group[];
   pupils: THREE.Mesh[];
   lids: THREE.Mesh[];
-  feet: THREE.Mesh[];
-  arms: THREE.Group[];
-  mouth: THREE.Group;
-  jaw: THREE.Mesh;
+  legs: THREE.Group[];
 }
 
-export function makeMonster(m: Materials): MonsterModel {
+export function makeNobbin(m: Materials): NobbinModel {
+  const mat = monsterMats(m);
   const root = new THREE.Group();
-  const bodyMat = phys({
-    color: 0x2fae36,
-    roughness: 0.32,
-    metalness: 0,
-    clearcoat: 0.8,
-    clearcoatRoughness: 0.2,
-    sheen: 0.25,
-    sheenColor: new THREE.Color(0x3a8a30),
-    emissive: 0x041a04,
-    envMap: m.env,
-    envMapIntensity: 0.35,
-  });
-  const geo = new THREE.SphereGeometry(0.6, 40, 28);
-  // Slightly pear-shaped, flatter at the bottom.
-  const p = geo.attributes.position;
-  for (let i = 0; i < p.count; i++) {
-    const y = p.getY(i);
-    const s = 1 + (y < 0 ? -y * 0.25 : -y * 0.12);
-    p.setX(i, p.getX(i) * s);
-    p.setZ(i, p.getZ(i) * s * 0.9);
-    if (y < -0.4) p.setY(i, -0.4 - (y + 0.4) * 0.4);
-  }
-  geo.computeVertexNormals();
-  const body = new THREE.Mesh(geo, bodyMat);
+  const geo = new THREE.SphereGeometry(0.42, 36, 24);
+  geo.scale(1.15, 0.85, 0.95);
+  const body = new THREE.Mesh(geo, mat.green);
+  body.position.y = -0.02;
   root.add(body);
-
-  // Face (eyes and mouth) faces the camera (+z) and turns slightly toward travel.
-  const face = new THREE.Group();
-  root.add(face);
-  const white = phys({ color: 0xe8e8e8, roughness: 0.2, clearcoat: 1, envMap: m.env, envMapIntensity: 0.4 });
-  const black = std({ color: 0x0a0a0c, roughness: 0.3 });
-  const lidMat = phys({ color: 0x2e9a35, roughness: 0.35, clearcoat: 0.8 });
+  const eyes: THREE.Group[] = [];
   const pupils: THREE.Mesh[] = [];
   const lids: THREE.Mesh[] = [];
   for (const side of [-1, 1]) {
-    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.19, 24, 18), white);
-    eye.scale.set(1, 1.15, 0.8);
-    eye.position.set(side * 0.2, 0.18, 0.44);
-    face.add(eye);
-    const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.085, 16, 12), black);
-    pupil.position.set(side * 0.2, 0.18, 0.6);
-    face.add(pupil);
-    pupils.push(pupil);
-    const lid = new THREE.Mesh(new THREE.SphereGeometry(0.2, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2), lidMat);
-    lid.position.copy(eye.position);
-    lid.scale.set(1.04, 1.2, 0.86);
-    lid.rotation.x = -0.9;
-    face.add(lid);
-    lids.push(lid);
+    const e = eye(mat, 0.21);
+    e.g.position.set(side * 0.24, 0.36, 0.12);
+    root.add(e.g);
+    eyes.push(e.g);
+    pupils.push(e.pupil);
+    lids.push(e.lid);
   }
-  const mouth = new THREE.Group();
-  const mouthMat = std({ color: 0x5a0f12, roughness: 0.6 });
-  const jaw = new THREE.Mesh(new THREE.SphereGeometry(0.17, 20, 12, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2), mouthMat);
-  jaw.scale.set(1.3, 0.55, 0.6);
-  mouth.add(jaw);
-  const toothMat = std({ color: 0xfff8e8, roughness: 0.4 });
-  for (let i = 0; i < 4; i++) {
-    const t = new THREE.Mesh(new THREE.ConeGeometry(0.035, 0.08, 6), toothMat);
-    t.rotation.x = Math.PI;
-    t.position.set(-0.12 + i * 0.08, -0.01, 0.07);
-    mouth.add(t);
-  }
-  mouth.position.set(0, -0.12, 0.47);
-  face.add(mouth);
-
-  // Little red feet (the CGA sprite's red/brown accents)
-  const footMat = phys({ color: 0xd13a22, roughness: 0.4, clearcoat: 0.5 });
-  const feet: THREE.Mesh[] = [];
+  const mouth = new THREE.Mesh(new THREE.TorusGeometry(0.12, 0.025, 6, 16, Math.PI), mat.mouth);
+  mouth.rotation.z = Math.PI;
+  mouth.position.set(0, -0.06, 0.4);
+  root.add(mouth);
+  const legs: THREE.Group[] = [];
   for (const side of [-1, 1]) {
-    const f = new THREE.Mesh(new THREE.SphereGeometry(0.15, 16, 10), footMat);
-    f.scale.set(1.3, 0.55, 1.1);
-    f.position.set(side * 0.24, -0.42, 0.08);
-    root.add(f);
-    feet.push(f);
+    const l = leg(mat, 0.26, side);
+    l.position.set(side * 0.3, -0.25, 0);
+    root.add(l);
+    legs.push(l);
   }
-
-  // Hobbin arms with claws (hidden while a Nobbin)
-  const arms: THREE.Group[] = [];
-  const clawMat = std({ color: 0xf0e6d0, roughness: 0.35 });
-  for (const side of [-1, 1]) {
-    const arm = new THREE.Group();
-    const upper = new THREE.Mesh(new THREE.CapsuleGeometry(0.075, 0.32, 6, 10), bodyMat);
-    upper.rotation.z = (side * Math.PI) / 2.6;
-    upper.position.set(side * 0.18, 0, 0);
-    arm.add(upper);
-    for (let c = 0; c < 3; c++) {
-      const claw = new THREE.Mesh(new THREE.ConeGeometry(0.035, 0.14, 6), clawMat);
-      claw.position.set(side * 0.36, 0.08 - c * 0.07, 0.04);
-      claw.rotation.z = -side * (Math.PI / 2 - 0.3);
-      arm.add(claw);
-    }
-    arm.position.set(side * 0.5, -0.05, 0.1);
-    root.add(arm);
-    arms.push(arm);
-  }
-
   shadow(root);
-  return { root, body, bodyMat, face, pupils, lids, feet, arms, mouth, jaw };
+  return { root, body, bodyMat: mat.green, eyes, pupils, lids, legs };
+}
+
+export interface HobbinModel {
+  root: THREE.Group;
+  /** Turns to face the travel direction (built facing +x). */
+  facing: THREE.Group;
+  body: THREE.Mesh;
+  bodyMat: THREE.MeshPhysicalMaterial;
+  upperJaw: THREE.Group;
+  lowerJaw: THREE.Group;
+  pupils: THREE.Mesh[];
+  legs: THREE.Group[];
+}
+
+export function makeHobbin(m: Materials): HobbinModel {
+  const mat = monsterMats(m);
+  const root = new THREE.Group();
+  const facing = new THREE.Group();
+  root.add(facing);
+  const geo = new THREE.SphereGeometry(0.42, 36, 24);
+  geo.scale(1.05, 0.95, 0.9);
+  const body = new THREE.Mesh(geo, mat.green);
+  body.position.set(-0.12, 0.05, 0);
+  facing.add(body);
+  // Back spikes, like the jagged outline of the sprite.
+  for (let k = 0; k < 5; k++) {
+    const a = 0.5 + k * 0.42;
+    const spike = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.2, 8), mat.green);
+    spike.position.set(-0.12 + Math.cos(a) * 0.44, 0.05 + Math.sin(a) * 0.4, 0);
+    spike.rotation.z = a - Math.PI / 2;
+    facing.add(spike);
+  }
+  // One big yellow eye, visible from both sides.
+  const pupils: THREE.Mesh[] = [];
+  for (const side of [-1, 1]) {
+    const e = eye(mat, 0.17);
+    e.g.position.set(0.08, 0.24, side * 0.3);
+    e.g.rotation.y = side * 0.5;
+    e.lid.visible = false;
+    facing.add(e.g);
+    pupils.push(e.pupil);
+  }
+  // Red jaws gaping forward, lined with teeth.
+  const jaw = (upper: boolean) => {
+    const g = new THREE.Group();
+    const shell = new THREE.Mesh(new THREE.SphereGeometry(0.3, 24, 12, 0, Math.PI * 2, upper ? 0 : Math.PI / 2, Math.PI / 2), mat.red);
+    shell.scale.set(1.35, 0.55, 0.85);
+    shell.position.x = 0.24;
+    g.add(shell);
+    const inside = new THREE.Mesh(new THREE.CircleGeometry(0.29, 20), mat.mouth);
+    inside.rotation.x = upper ? Math.PI / 2 : -Math.PI / 2;
+    inside.scale.set(1.3, 0.82, 1);
+    inside.position.set(0.24, upper ? 0.002 : -0.002, 0);
+    g.add(inside);
+    for (let k = 0; k < 4; k++) {
+      const t = new THREE.Mesh(new THREE.ConeGeometry(0.035, 0.09, 6), mat.tooth);
+      t.position.set(0.12 + k * 0.1, upper ? -0.04 : 0.04, 0.16 - k * 0.02);
+      if (upper) t.rotation.x = Math.PI;
+      g.add(t);
+      const t2 = t.clone();
+      t2.position.z = -t.position.z;
+      g.add(t2);
+    }
+    g.position.set(0.12, -0.02, 0);
+    return g;
+  };
+  const upperJaw = jaw(true);
+  const lowerJaw = jaw(false);
+  facing.add(upperJaw, lowerJaw);
+  const legs: THREE.Group[] = [];
+  for (const side of [-1, 1]) {
+    const l = leg(mat, 0.22, 0);
+    l.position.set(-0.1, -0.3, side * 0.16);
+    facing.add(l);
+    legs.push(l);
+  }
+  shadow(root);
+  return { root, facing, body, bodyMat: mat.green, upperJaw, lowerJaw, pupils, legs };
 }
 
 // -----------------------------------------------------------------------------

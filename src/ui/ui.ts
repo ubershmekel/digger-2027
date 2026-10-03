@@ -132,7 +132,7 @@ export class Ui {
         const el = h(`<div class="panel boot">
           <h1 class="logo">DIGGER<span>2027</span></h1>
           <button class="primary big" autofocus>Press any key to begin</button>
-          <p class="fine">A reimagining of Digger by Windmill Software, 1983</p>
+          <p class="fine">A fan-made, modern version of the original 1983 Digger by Windmill Software</p>
         </div>`);
         const go = () => {
           removeEventListener('keydown', key, true);
@@ -158,8 +158,10 @@ export class Ui {
             <button data-a="scores">High Scores</button>
             <button data-a="settings">Settings</button>
             <button data-a="help">How to Play</button>
+            <a class="button" href="https://github.com/ubershmekel/digger-2027" target="_blank" rel="noopener">Source on GitHub</a>
           </nav>
-          <p class="fine">F2 classic graphics · M mute · Esc pause</p>
+          ${this.menuScores()}
+          <p class="fine">F2 graphics · F3 sound · M mute · Esc pause</p>
         </div>`);
         el.addEventListener('click', (e) => {
           const a = (e.target as HTMLElement).closest<HTMLElement>('[data-a]')?.dataset.a;
@@ -214,7 +216,7 @@ export class Ui {
             <p>When the <b class="cherry">cherry</b> appears, grab it: for a short time you can eat the monsters. 200, 400, 800…</p>
             <p>Eight emeralds in a row: +250. Extra life every 20,000 points.</p>
           </div>
-          <p class="fine">Esc pause · F2 classic graphics · M mute · any key skips cut-scenes · gamepads supported</p>
+          <p class="fine">Esc pause · F2 classic graphics · F3 classic sound · M mute · any key skips cut-scenes · gamepads supported</p>
           <nav class="buttons row"><button data-a="back" autofocus>Back</button></nav>
         </div>`);
         el.querySelector('[data-a=back]')!.addEventListener('click', () => this.back());
@@ -225,6 +227,16 @@ export class Ui {
       case 'initials':
         return this.buildInitials();
     }
+  }
+
+  /** Compact top-ten shown beside the title menu (the 3D title has no CGA score table). */
+  private menuScores(): string {
+    const list = this.scores();
+    const rows = Array.from({ length: 10 }, (_, i) => {
+      const e = list[i];
+      return `<li><span class="ini">${esc(e?.initials ?? '...')}</span><span class="pts">${e ? e.score.toLocaleString() : '0'}</span></li>`;
+    }).join('');
+    return `<section class="menu-scores"><h3>High Scores</h3><ol>${rows}</ol></section>`;
   }
 
   private buildSettings(): HTMLElement {
@@ -248,7 +260,7 @@ export class Ui {
           ${slider('masterVolume', 'Master')}
           ${slider('musicVolume', 'Music')}
           ${slider('sfxVolume', 'Effects')}
-          <div class="row-label">Sound style</div>
+          <div class="row-label">Sound style <kbd>F3</kbd></div>
           ${seg('audio', [
             ['hd', 'Jazz'],
             ['classic', 'PC speaker'],

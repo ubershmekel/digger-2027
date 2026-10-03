@@ -141,7 +141,8 @@ export class Main {
     d.outtext('D I G G E R', 100, 0, 3);
     this.shownplayers();
     g.scores.showtable(g.highScores());
-    let frame = 1;
+    // The original idles ~4 s before the first introduction; start closer to it.
+    let frame = 40;
     let x = 0;
     let shown = this.nplayers;
     while (g.startRequest == null) {

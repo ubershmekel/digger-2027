@@ -109,6 +109,12 @@ export class App {
         this.ui.toast(this.settings.graphics == 'hd' ? 'Remastered graphics' : 'Classic graphics');
         if (this.ui.screen == 'settings') this.ui.show('settings');
         break;
+      case 'toggleSound':
+        this.settings.audio = this.settings.audio == 'hd' ? 'classic' : 'hd';
+        this.applySetting(this.settings, 'audio');
+        this.ui.toast(this.settings.audio == 'hd' ? 'Jazz sound' : 'PC speaker sound');
+        if (this.ui.screen == 'settings') this.ui.show('settings');
+        break;
       case 'mute':
         this.settings.muted = !this.settings.muted;
         this.applySetting(this.settings, 'muted');
