@@ -47,6 +47,10 @@ const qDownR = new THREE.Quaternion().setFromAxisAngle(zAxis, -Math.PI / 2);
 const qUpL = new THREE.Quaternion().setFromAxisAngle(zAxis, -Math.PI / 2).multiply(qLeft);
 const qDownL = new THREE.Quaternion().setFromAxisAngle(zAxis, Math.PI / 2).multiply(qLeft);
 const qFlip = new THREE.Quaternion().setFromAxisAngle(zAxis, Math.PI);
+/** Three-quarter view towards the camera, for the victory dance. */
+const qFront = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -1.1);
+/** Seconds per hop of the victory dance; every fourth hop is a spinning leap. */
+const WIN_BEAT = 0.4;
 
 const damp = (a: number, b: number, k: number, dt: number) => b + (a - b) * Math.exp(-k * dt);
 
@@ -112,6 +116,9 @@ export class HdRenderer implements Renderer {
   private cherryWasOn = false;
   private emAge = new Float32Array(151).fill(9);
   private diggerWasOn = false;
+  /** Victory dance clock and the last hop that set off its fireworks. */
+  private winT = 0;
+  private winBeat = -1;
   private grave: THREE.Group;
   private monsters: MonsterState[] = [];
   private bags: BagState[] = [];
@@ -406,6 +413,12 @@ export class HdRenderer implements Renderer {
       }
       case 'levelDone':
         this.popups.title('Level Complete', '', 2.6);
+        // Any monsters left vanish in a puff rather than blinking out.
+        for (const st of this.monsters) {
+          if (!st.wasOn) continue;
+          const p = (st.morph > 0.5 ? st.hob : st.nob).root.position;
+          this.dust.emit({ x: p.x, y: p.y, z: ACTOR_Z + 0.3, count: 24, color: 0xb6ff9e, color2: 0x2a7a2a, speed: 3.5, life: 0.7, size: 0.7, drag: 3 });
+        }
         break;
       case 'emerald': {
         const p = P(e.x, e.y);
@@ -503,6 +516,13 @@ export class HdRenderer implements Renderer {
     const x = spriteCx(sx);
     const y = spriteCy(sy);
     this.grave.visible = false;
+    // The sim takes the Digger off the field as soon as the level is won; keep it for the dance.
+    if (g.scene == 'levdone' || (g.scene == 'aftermath' && g.main.gamedat[g.main.curplayer].levdone)) {
+      this.celebrate(f, dt);
+      return;
+    }
+    this.winT = 0;
+    this.winBeat = -1;
     if (!on || ch < 1 || ch > 30) {
       d.root.visible = false;
       this.headlamp.intensity = 0;
@@ -526,7 +546,7 @@ export class HdRenderer implements Renderer {
     if (!f.paused) this.diggerAge += dt;
     const ds = entrance(this.diggerAge, 0.5);
     d.root.scale.setScalar(ds * this.castExit);
-    d.root.rotation.y = (1 - Math.min(1, this.diggerAge / 0.5)) * Math.PI * 2;
+    d.root.rotation.set(0, (1 - Math.min(1, this.diggerAge / 0.5)) * Math.PI * 2, 0);
     const moved = Math.hypot(x - d.root.position.x, y - d.root.position.y);
     d.root.position.set(x, y, ACTOR_Z);
     if (ch == 25) {
@@ -609,6 +629,61 @@ export class HdRenderer implements Renderer {
         drag: 1,
       });
     }
+  }
+
+  /**
+   * Level complete: the Digger steps out of its tunnel towards the camera and hops to
+   * the jingle, rocking side to side, with fireworks over the field on every beat.
+   */
+  private celebrate(f: FrameInfo, dt: number): void {
+    const g = f.game;
+    const d = this.digger;
+    // Stands still until the jingle starts (bags may still be falling).
+    if (g.scene == 'levdone' && !f.paused) this.winT += dt;
+    const t = this.winT;
+    const x = spriteCx(g.digger.diggerx);
+    const y = spriteCy(g.digger.diggery);
+    const out = Math.min(1, t / 0.35);
+    const z = ACTOR_Z + out * 1.5;
+    const beat = Math.floor(t / WIN_BEAT);
+    const u = (t / WIN_BEAT) % 1;
+    const leap = beat % 4 == 3;
+    const air = Math.sin(u * Math.PI);
+    // Stretch in the air, squash on landing.
+    const stretch = 1 + (air - 0.4) * 0.22 * out;
+    const wide = 1 / Math.sqrt(stretch);
+    d.root.visible = true;
+    d.root.position.set(x, y + air * (leap ? 0.9 : 0.4) * out, z);
+    d.root.scale.set(wide, stretch, wide);
+    d.root.rotation.set(0, leap ? u * Math.PI * 2 : 0, Math.sin((t / WIN_BEAT) * Math.PI) * 0.2 * out);
+    this.diggerQ.slerp(qFront, 1 - Math.exp(-10 * dt));
+    d.body.quaternion.copy(this.diggerQ);
+    d.body.position.y = 0;
+    this.diggerWasOn = false;
+    this.headlamp.intensity = 0;
+
+    if (!f.paused) {
+      d.spinner.rotation.x += 34 * dt;
+      for (const w of d.wheels) w.rotation.z -= 12 * dt;
+    }
+    d.drill.position.x = 0.5 + air * 0.12;
+    this.hoopUp = 1;
+    d.hoop.scale.set(1, 1.25 + air * 0.3, 1);
+    d.hoop.position.y = 0.55;
+    d.hoopMat.emissiveIntensity = 0.8 + air * 0.6;
+    d.hoopMat.color.set(0xffd040);
+    d.beaconMat.color.setHSL((t * 1.5) % 1, 1, 0.6);
+    d.beaconMat.emissive.copy(d.beaconMat.color);
+    d.beaconMat.emissiveIntensity = 3;
+    d.lampMat.emissiveIntensity = 1.4;
+
+    if (g.scene != 'levdone' || beat == this.winBeat) return;
+    this.winBeat = beat;
+    // Each landing kicks up sparks, and a firework bursts somewhere over the field.
+    this.sparks.emit({ x, y: y - 0.5, z, count: 24, color: 0xffe08a, color2: 0x7dffb8, speed: 5, life: 0.7, size: 0.3, gravity: 8, drag: 1.5, up: 0.8 });
+    const hue = new THREE.Color().setHSL(Math.random(), 1, 0.6);
+    this.sparks.emit({ x: (Math.random() - 0.5) * 24, y: wy(30 + Math.random() * 90), z: 1.2, count: 90, color: hue, color2: hue.clone().lerp(new THREE.Color(0xffffff), 0.5), speed: 9, life: 1.2, size: 0.5, gravity: 5, drag: 2.2 });
+    if (beat % 4 == 0) this.coins.toss(x, y, z, 10, y - 0.75, 0.9);
   }
 
   private updateMonsters(f: FrameInfo, dt: number): void {
@@ -945,11 +1020,12 @@ export class HdRenderer implements Renderer {
     const tilt = THREE.MathUtils.degToRad(7);
     let tx = 0;
     let ty = cy;
-    // Ease in toward the Digger while it dies.
-    const dyingZoom = g.scene == 'dying' && !this.reducedMotion ? 1 : 0;
-    this.zoom = damp(this.zoom, dyingZoom, 2.2, dt);
-    const zx = spriteCx(g.sprite.sprx[0]);
-    const zy = spriteCy(g.sprite.spry[0]);
+    // Ease in toward the Digger while it dies, and a little for its victory dance.
+    const won = g.scene == 'levdone';
+    const focus = this.reducedMotion ? 0 : g.scene == 'dying' ? 1 : won ? 0.6 : 0;
+    this.zoom = damp(this.zoom, focus, 2.2, dt);
+    const zx = spriteCx(won ? g.digger.diggerx : g.sprite.sprx[0]);
+    const zy = spriteCy(won ? g.digger.diggery : g.sprite.spry[0]);
     tx += (zx - tx) * this.zoom * 0.25;
     ty += (zy - ty) * this.zoom * 0.25;
     const d = dist * (1 - this.zoom * 0.18);

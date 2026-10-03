@@ -9,6 +9,8 @@ import { LEVELS } from './levels';
 export const TICK_MS = Math.floor(1000 / 13);
 
 const digsprorder = [14, 13, 7, 6, 5, 4, 3, 2, 1, 12, 11, 10, 9, 8, 15, 0];
+const victoryhop = [0, 4, 6, 4];
+const victoryspin = [0, 6, 4, 2];
 
 class GameData {
   lives = 0;
@@ -315,7 +317,7 @@ export class Main {
       g.scene = 'levdone';
       g.emit({ type: 'levelDone', level: this.levno(), player: this.curplayer });
       g.sound.soundlevdone();
-      for (let i = 0; i < 64; i++) yield 50;
+      yield* this.victorydance();
     }
     if (g.digger.countem() == 0 || cur().levdone) {
       cur().level++;
@@ -326,6 +328,28 @@ export class Main {
       g.drawing.drawlives();
       if (cur().lives == 0 && !g.input.escape) yield* this.endofgame();
     }
+  }
+
+  /**
+   * A modern addition: the original left an empty field for the 3.2 s of the
+   * level-complete jingle. Here the Digger comes back and hops on the spot, turning
+   * left and right, with a pirouette to finish. Nothing but its own sprite changes.
+   */
+  *victorydance(): Generator<number> {
+    const { g } = this;
+    const x = g.digger.diggerx;
+    const y = g.digger.diggery;
+    g.sprite.initspr(0, 1, 4, 15, 0, 0);
+    g.sprite.movedrawspr(0, x, y);
+    for (let i = 0; i < 64; i++) {
+      if ((i & 1) == 0) {
+        const k = i >> 1;
+        const dir = k >= 24 ? victoryspin[k & 3] : (k & 4) != 0 ? 4 : 0;
+        g.drawing.drawdigger(dir, x, y - victoryhop[k & 3], (k & 1) == 0);
+      }
+      yield 50;
+    }
+    g.sprite.erasespr(0);
   }
 
   *endofgame(): Generator<number> {
