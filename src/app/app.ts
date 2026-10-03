@@ -16,7 +16,7 @@ export class App {
   readonly driver: Driver;
   private audio: AudioEngine | null = null;
   private classic = new ClassicRenderer();
-  private hd: Renderer | null = null;
+  hd: Renderer | null = null;
   private hdLoading: Promise<Renderer | null> | null = null;
   private active: Renderer;
   private readonly stage: HTMLElement;
@@ -115,6 +115,11 @@ export class App {
         this.ui.toast(this.settings.muted ? 'Sound muted' : 'Sound on');
         break;
     }
+  }
+
+  devStart(level: number): void {
+    this.game.requestStart(1, level);
+    this.ui.show(null);
   }
 
   private startGame(players: number): void {
@@ -301,6 +306,7 @@ export class App {
     }
     this.ui.showSkipHint(g.skippable && this.ui.screen == null && !this.driver.paused);
     const hd = this.active !== this.classic;
+    this.ui.root.classList.toggle('hd-attract', hd && g.scene == 'attract');
     const playing = g.inGame && g.scene != 'initials';
     this.ui.setHudVisible(hd && playing);
     if (hd && playing) {

@@ -12,6 +12,8 @@ export const HEIGHT = 200;
 /** Sprite ids drawn with drawmiscspr that shape the terrain (background tiles and tunnel blobs). */
 const TERRAIN_FIRST = 93;
 const TERRAIN_LAST = 107;
+/** First tunnel-blob sprite id; ids below it (in the terrain range) are background tiles. */
+const BLOB_FIRST = 102;
 
 export class Pc {
   /** 4 pixels per byte. */
@@ -23,12 +25,18 @@ export class Pc {
   readonly terrain = new Uint8Array(65536 / 4);
   /** Bumped whenever `terrain` changes, so renderers can cheaply detect updates. */
   terrainVersion = 0;
+  /**
+   * One byte per pixel: 1 where a tunnel has been dug (by a tunnel blob),
+   * 0 for solid earth. Unlike `terrain`, never-painted areas count as solid.
+   */
+  readonly dug = new Uint8Array(WIDTH * HEIGHT);
   /** Palette intensity: 0 normal, 1 bright (bonus mode flash). */
   curpal = 0;
 
   gclear(): void {
     this.pixels.fill(0);
     this.terrain.fill(0);
+    this.dug.fill(0);
     this.terrainVersion++;
   }
 
@@ -70,6 +78,7 @@ export class Pc {
     this.putim(this.pixels, x, y, ch, w, h);
     if (ch >= TERRAIN_FIRST && ch <= TERRAIN_LAST) {
       this.putim(this.terrain, x, y, ch, w, h);
+      this.markdug(x, y, ch, w, h, ch >= BLOB_FIRST);
       this.terrainVersion++;
     }
   }
@@ -98,6 +107,34 @@ export class Pc {
         if (src == spr.length || src == msk.length) return;
       }
       dest += WIDTH >> 2;
+    }
+  }
+
+  /** Updates the per-pixel dug mask from a terrain sprite draw. */
+  private markdug(x: number, y: number, ch: number, w: number, h: number, blob: boolean): void {
+    const spr = cgatable[ch * 2];
+    const msk = cgatable[ch * 2 + 1];
+    let src = 0;
+    for (let i = 0; i < h; i++) {
+      const py = y + i;
+      for (let j = 0; j < w; j++) {
+        if (src >= spr.length || src >= msk.length) return;
+        const px = spr[src];
+        const mx = msk[src];
+        src++;
+        if (py < 0 || py >= HEIGHT) continue;
+        for (let k = 0; k < 4; k++) {
+          const xx = x + j * 4 + k;
+          if (xx < 0 || xx >= WIDTH) continue;
+          // Bit pairs are stored MSB-first in the source data: pixel k uses bits (3-k)*2.
+          const sh = (3 - k) * 2;
+          if (((mx >> sh) & 3) != 0) continue;
+          const v = (px >> sh) & 3;
+          if (blob) {
+            if (v == 0) this.dug[py * WIDTH + xx] = 1;
+          } else this.dug[py * WIDTH + xx] = 0;
+        }
+      }
     }
   }
 

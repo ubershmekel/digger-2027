@@ -127,10 +127,10 @@ export class Bags {
     const clbits = g.drawing.drawgold(bag, 6, b.x, b.y);
     g.main.incpenalty();
     if ((clbits & 1) != 0) {
+      g.emit({ type: 'gold', x: b.x, y: b.y, byDigger: true });
       g.scores.scoregold();
       g.sound.soundgold();
       g.digger.digtime = 0;
-      g.emit({ type: 'gold', x: b.x, y: b.y, byDigger: true });
     } else {
       g.monster.mongold();
       g.emit({ type: 'gold', x: b.x, y: b.y, byDigger: false });
