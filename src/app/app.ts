@@ -26,7 +26,6 @@ export class App {
   private touchEl: HTMLElement | null = null;
   private last = performance.now();
   private start = performance.now();
-  private assisted = false;
   /** Ends the wait for the music to render (set while waiting). */
   private skipMusicWait: (() => void) | null = null;
   private wasInGame = false;
@@ -265,7 +264,6 @@ export class App {
   private async startGame(players: number, level = 1): Promise<void> {
     if (this.skipMusicWait) return; // already waiting to start
     await this.waitForMusic();
-    this.assisted = this.settings.turnBuffer > 0 || this.settings.speed != 1;
     this.game.requestStart(players, level);
     this.ui.show(null);
   }
@@ -313,7 +311,7 @@ export class App {
 
   private submitInitials(s: string): void {
     const p = this.game.pendingInitials;
-    if (p) this.scores.add({ initials: s, score: p.score, assisted: this.assisted || undefined, date: new Date().toISOString() });
+    if (p) this.scores.add({ initials: s, score: p.score, date: new Date().toISOString() });
     this.game.submitInitials(s);
     this.ui.show(null);
   }
@@ -367,11 +365,9 @@ export class App {
         break;
       case 'turnBuffer':
         this.game.options.turnBuffer = s.turnBuffer;
-        if (s.turnBuffer > 0 && this.game.inGame) this.assisted = true;
         break;
       case 'speed':
         this.driver.speed = s.speed;
-        if (s.speed != 1 && this.game.inGame) this.assisted = true;
         break;
       case 'keys':
         this.controls?.setKeys(s.keys);

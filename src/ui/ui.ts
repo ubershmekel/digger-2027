@@ -321,13 +321,12 @@ export class Ui {
           const e = list[i];
           return `<li><span class="rank">${i + 1}</span><span class="ini">${esc(e?.initials ?? '...')}</span><span class="pts">${
             e ? e.score.toLocaleString() : '—'
-          }${e?.assisted ? '<sup title="Made with turn buffering or a non-default speed">*</sup>' : ''}</span></li>`;
+          }</span></li>`;
         }).join('');
         const el = h(`<div class="panel scores">
           <button class="close" data-a="back" aria-label="Close">×</button>
           <h2>High Scores</h2>
           <ol class="table">${rows}</ol>
-          <p class="fine">* assisted: turn buffering on or a non-default speed</p>
           <nav class="buttons row"><button data-a="back" autofocus>Back</button></nav>
         </div>`);
         el.querySelectorAll('[data-a=back]').forEach((b) => b.addEventListener('click', () => this.back()));

@@ -109,8 +109,6 @@ export function recordLevel(level: number): void {
 export interface HighScore {
   initials: string;
   score: number;
-  /** Set when the score was made with non-original rules (turn buffering, speed). */
-  assisted?: boolean;
   date?: string;
 }
 

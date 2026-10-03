@@ -178,7 +178,7 @@ Composed as code, and synthesized: no samples ship with the game.
 - [x] Starting-level select, for any level you've reached.
 - [x] Every cut-scene is skippable: Fire twice. A skipping press never becomes a shot, and Fire is ignored for a moment as each life starts.
 - [x] In 3D, the screen fades to black after a death and fades back in on revive.
-- [x] High scores (top 10 with initials) kept in `localStorage`, surviving restarts. Old `ds` scores from the reference port are imported. Reset is in Settings. Scores made with assists are marked.
+- [x] High scores (top 10 with initials) kept in `localStorage`, surviving restarts. Old `ds` scores from the reference port are imported. Reset is in Settings.
 - [x] Graphics quality: Auto (steps down when frames are slow, and switches to classic if even Low is unplayable), Low, Medium, High.
 - [x] Fullscreen (F or Settings).
 - [x] Accessibility: reduced motion; high contrast (darker earth, brighter actors, violet monsters so they never blend with emeralds); captions for sound cues.
