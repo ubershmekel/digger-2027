@@ -27,6 +27,9 @@ export class App {
   private start = performance.now();
   private assisted = false;
   private wasInGame = false;
+  private skipArmedAt = -1;
+  private skippableSince = 0;
+  private wasSkippable = false;
 
   constructor(root: HTMLElement) {
     this.stage = document.createElement('div');
@@ -100,9 +103,17 @@ export class App {
       case 'confirm':
         this.ui.confirm();
         break;
-      case 'skip':
-        if (this.driver.skip()) this.ui.showSkipHint(false);
+      case 'skip': {
+        // Skipping takes two Fire presses, so a death mid-firefight isn't skipped by accident.
+        // Presses in the first moment of a cut-scene don't count either.
+        const now = performance.now();
+        if (!this.game.skippable || now - this.skippableSince < 400) break;
+        if (this.skipArmedAt > 0 && now - this.skipArmedAt < 2500) {
+          this.skipArmedAt = -1;
+          this.driver.skip();
+        } else this.skipArmedAt = now;
         break;
+      }
       case 'toggleGraphics':
         this.settings.graphics = this.settings.graphics == 'hd' ? 'classic' : 'hd';
         this.applySetting(this.settings, 'graphics');
@@ -310,7 +321,10 @@ export class App {
       this.wasInGame = false;
       this.ui.show('menu');
     }
-    this.ui.showSkipHint(g.skippable && this.ui.screen == null && !this.driver.paused);
+    if (g.skippable && !this.wasSkippable) this.skippableSince = performance.now();
+    this.wasSkippable = g.skippable;
+    if (!g.skippable || performance.now() - this.skipArmedAt > 2500) this.skipArmedAt = -1;
+    this.ui.showSkipHint(g.skippable && this.ui.screen == null && !this.driver.paused, this.skipArmedAt > 0);
     const hd = this.active !== this.classic;
     this.ui.root.classList.toggle('hd-attract', hd && g.scene == 'attract');
     const playing = g.inGame && g.scene != 'initials';

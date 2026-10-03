@@ -63,7 +63,8 @@ export class Controls {
       if (!e.repeat) this.t.action('mute');
       return;
     }
-    if (!e.repeat && !e.ctrlKey && !e.altKey && !e.metaKey) this.t.action('skip');
+    // Only Fire (or Enter) counts toward skipping a cut-scene, so steering never skips by accident.
+    if (!e.repeat && (k == 'fire' || e.code == 'Enter')) this.t.action('skip');
     if (k) {
       e.preventDefault();
       if (!this.held.has(k)) {
@@ -111,7 +112,7 @@ export class Controls {
       if (edge(0)) this.t.action('confirm');
       if (edge(1)) this.t.action('back');
     } else {
-      if (pressedNow.some((p, i) => p && !this.padPrev[i] && i != 9)) this.t.action('skip');
+      if ([0, 1, 2, 3, 7].some(edge)) this.t.action('skip');
       for (const k of want)
         if (!this.padDirs.has(k)) {
           this.padDirs.add(k);
@@ -150,7 +151,7 @@ export class Controls {
       }
       if (k) {
         if (![...active.values()].includes(k)) {
-          this.t.action('skip');
+          if (k == 'fire') this.t.action('skip');
           this.t.press(k);
         }
         active.set(id, k);

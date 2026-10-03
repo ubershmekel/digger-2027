@@ -43,12 +43,12 @@ export class Ui {
     this.root = h(`<div class="ui"></div>`);
     this.hud = h(`<div class="hud" hidden>
       <div class="hud-p hud-p1"><span class="hud-label">Score</span><span class="hud-score">0</span></div>
-      <div class="hud-mid"><span class="hud-level">Level 1</span><span class="hud-lives"></span></div>
+      <div class="hud-mid"><span class="hud-title">DIGGER <b>2027</b></span><span class="hud-level">Level 1</span><span class="hud-lives"></span></div>
       <div class="hud-p hud-p2" hidden><span class="hud-label">Player 2</span><span class="hud-score">0</span></div>
     </div>`);
     this.panel = h(`<div class="panel-wrap" hidden></div>`);
     this.toastEl = h(`<div class="toast" role="status" aria-live="polite"></div>`);
-    this.skipEl = h(`<div class="skip-hint" hidden>Press any key to skip</div>`);
+    this.skipEl = h(`<div class="skip-hint" hidden></div>`);
     this.root.append(this.hud, this.skipEl, this.panel, this.toastEl);
     host.appendChild(this.root);
     this.panel.addEventListener('keydown', (e) => this.navKeys(e));
@@ -65,8 +65,11 @@ export class Ui {
     this.toastTimer = window.setTimeout(() => this.toastEl.classList.remove('show'), 1600);
   }
 
-  showSkipHint(on: boolean): void {
+  showSkipHint(on: boolean, armed = false): void {
     this.skipEl.hidden = !on;
+    const text = armed ? 'Press Fire again to skip' : 'Press Fire twice to skip';
+    if (this.skipEl.textContent != text) this.skipEl.textContent = text;
+    this.skipEl.classList.toggle('armed', armed);
   }
 
   // --- HUD ------------------------------------------------------------------
@@ -88,7 +91,7 @@ export class Ui {
     this.hud.querySelector('.hud-p1 .hud-label')!.textContent = p.players < 2 ? 'Score' : 'Player 1';
     this.hud.querySelector('.hud-p1')!.classList.toggle('active', p.players > 1 && p.cur == 0);
     p2.classList.toggle('active', p.cur == 1);
-    this.hud.querySelector('.hud-level')!.textContent = `Level ${p.level}`;
+    this.hud.querySelector('.hud-level')!.textContent = `Level ${p.level}  ·  Esc for menu`;
     const lives = this.hud.querySelector('.hud-lives')!;
     lives.innerHTML = '';
     for (let i = 0; i < Math.max(0, p.lives - 1); i++) lives.appendChild(h(`<i class="life"></i>`));
@@ -216,7 +219,7 @@ export class Ui {
             <p>When the <b class="cherry">cherry</b> appears, grab it: for a short time you can eat the monsters. 200, 400, 800…</p>
             <p>Eight emeralds in a row: +250. Extra life every 20,000 points.</p>
           </div>
-          <p class="fine">Esc pause · F2 classic graphics · F3 classic sound · M mute · any key skips cut-scenes · gamepads supported</p>
+          <p class="fine">Esc pause · F2 classic graphics · F3 classic sound · M mute · press Fire twice to skip a cut-scene · gamepads supported</p>
           <nav class="buttons row"><button data-a="back" autofocus>Back</button></nav>
         </div>`);
         el.querySelector('[data-a=back]')!.addEventListener('click', () => this.back());

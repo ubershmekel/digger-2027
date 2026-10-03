@@ -583,6 +583,30 @@ input[type='range']::-moz-range-thumb {
   border-left: 7px solid #e8c35a;
 }
 
+.skip-hint.armed {
+  color: var(--gold);
+  opacity: 1;
+  animation: none;
+  font-weight: 700;
+}
+
+.hud-title {
+  font-weight: 900;
+  font-size: 1.05rem;
+  letter-spacing: 0.32em;
+  background: linear-gradient(180deg, #fff3d6 0%, var(--gold) 60%, var(--gold-deep) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.8));
+}
+
+.hud-title b {
+  font-weight: 600;
+  letter-spacing: 0.4em;
+  opacity: 0.8;
+}
+
 .skip-hint {
   position: absolute;
   bottom: max(18px, env(safe-area-inset-bottom));
@@ -710,7 +734,31 @@ input[type='range']::-moz-range-thumb {
 @media (prefers-reduced-motion: reduce) {
   .panel,
   button.big,
-  .skip-hint {
+  .skip-hint.armed {
+  color: var(--gold);
+  opacity: 1;
+  animation: none;
+  font-weight: 700;
+}
+
+.hud-title {
+  font-weight: 900;
+  font-size: 1.05rem;
+  letter-spacing: 0.32em;
+  background: linear-gradient(180deg, #fff3d6 0%, var(--gold) 60%, var(--gold-deep) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.8));
+}
+
+.hud-title b {
+  font-weight: 600;
+  letter-spacing: 0.4em;
+  opacity: 0.8;
+}
+
+.skip-hint {
     animation: none;
   }
 }
@@ -925,4 +973,14 @@ a.button:focus-visible {
   .ui.hd-attract .menu-scores {
     display: none;
   }
+}
+
+/* Keep the wordmark centred whether or not player 2 is shown. */
+.hud {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+}
+
+.hud-p2 {
+  justify-self: end;
 }

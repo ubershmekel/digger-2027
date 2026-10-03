@@ -50,6 +50,16 @@ const qFlip = new THREE.Quaternion().setFromAxisAngle(zAxis, Math.PI);
 
 const damp = (a: number, b: number, k: number, dt: number) => b + (a - b) * Math.exp(-k * dt);
 
+/** Overshooting ease for entrances: 0 → 1 with a little bounce past 1. */
+const easeOutBack = (t: number) => {
+  if (t >= 1) return 1;
+  const c1 = 1.9;
+  const c3 = c1 + 1;
+  return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
+};
+/** Entrance scale for something that appeared `age` seconds ago. */
+const entrance = (age: number, len = 0.45) => Math.max(0.001, easeOutBack(Math.max(0, age) / len));
+
 interface MonsterState {
   nob: NobbinModel;
   hob: HobbinModel;
@@ -61,6 +71,8 @@ interface MonsterState {
   lastX: number;
   phase: number;
   blink: number;
+  /** Seconds since it appeared (drives the entrance animation). */
+  age: number;
 }
 
 interface BagState {
@@ -69,6 +81,7 @@ interface BagState {
   wasCh: number;
   tilt: number;
   goldShown: number;
+  age: number;
 }
 
 export class HdRenderer implements Renderer {
@@ -94,6 +107,10 @@ export class HdRenderer implements Renderer {
   private diggerQ = new THREE.Quaternion();
   private lastH: 0 | 4 = 0;
   private hoopUp = 1;
+  private diggerAge = 9;
+  private cherryAge = 9;
+  private cherryWasOn = false;
+  private emAge = new Float32Array(151).fill(9);
   private diggerWasOn = false;
   private grave: THREE.Group;
   private monsters: MonsterState[] = [];
@@ -192,14 +209,14 @@ export class HdRenderer implements Renderer {
       const hob = makeHobbin(this.mats);
       nob.root.visible = hob.root.visible = false;
       this.scene.add(nob.root, hob.root);
-      this.monsters.push({ nob, hob, morph: 0, face: 1, wasOn: false, squash: 0, lastX: 0, phase: Math.random() * 6, blink: 2 + Math.random() * 3 });
+      this.monsters.push({ nob, hob, morph: 0, face: 1, wasOn: false, squash: 0, lastX: 0, phase: Math.random() * 6, blink: 2 + Math.random() * 3, age: 9 });
     }
     for (let i = 0; i < 7; i++) {
       const bag = makeBag(this.mats);
       const gold = makeGold(this.mats);
       bag.root.visible = gold.root.visible = false;
       this.scene.add(bag.root, gold.root);
-      this.bags.push({ bag, gold, wasCh: 0, tilt: 0, goldShown: 0 });
+      this.bags.push({ bag, gold, wasCh: 0, tilt: 0, goldShown: 0, age: 9 });
     }
     this.cherry = makeCherry(this.mats);
     this.cherry.visible = false;
@@ -495,6 +512,14 @@ export class HdRenderer implements Renderer {
       return;
     }
     d.root.visible = true;
+    if (!this.diggerWasOn && ch < 25) {
+      this.diggerAge = 0;
+      this.sparks.emit({ x, y, z: ACTOR_Z + 0.3, count: 40, color: 0xffe0a0, color2: 0xff7040, speed: 5, life: 0.6, size: 0.35, drag: 3 });
+    }
+    if (!f.paused) this.diggerAge += dt;
+    const ds = entrance(this.diggerAge, 0.5);
+    d.root.scale.setScalar(ds);
+    d.root.rotation.y = (1 - Math.min(1, this.diggerAge / 0.5)) * Math.PI * 2;
     const moved = Math.hypot(x - d.root.position.x, y - d.root.position.y);
     d.root.position.set(x, y, ACTOR_Z);
     if (ch == 25) {
@@ -603,7 +628,10 @@ export class HdRenderer implements Renderer {
         st.morph = hobbin ? 1 : 0;
         st.lastX = x;
         st.squash = 0;
+        st.age = 0;
       }
+      if (!f.paused) st.age += dt;
+      const pop = entrance(st.age, 0.5);
       st.wasOn = true;
       const vx = (x - st.lastX) / Math.max(dt, 1e-3);
       st.lastX = x;
@@ -634,7 +662,7 @@ export class HdRenderer implements Renderer {
       nob.root.visible = nobScale > 0.01;
       if (nob.root.visible) {
         nob.root.position.set(x, y, ACTOR_Z);
-        nob.root.scale.set(nobScale * (1 + sq * 0.45), nobScale * (1 - sq * 0.62), nobScale);
+        nob.root.scale.set(pop * nobScale * (1 + sq * 0.45), pop * nobScale * (1 - sq * 0.62), pop * nobScale);
         nob.root.rotation.y = st.face * 0.3;
         nob.body.scale.set(1 + bounce, 1 - bounce, 1 + bounce);
         for (let k = 0; k < 2; k++) {
@@ -658,7 +686,7 @@ export class HdRenderer implements Renderer {
       hob.root.visible = hobScale > 0.01;
       if (hob.root.visible) {
         hob.root.position.set(x, y, ACTOR_Z);
-        hob.root.scale.set(hobScale * (1 + sq * 0.45), hobScale * (1 - sq * 0.62), hobScale);
+        hob.root.scale.set(pop * hobScale * (1 + sq * 0.45), pop * hobScale * (1 - sq * 0.62), pop * hobScale);
         const targetYaw = st.face > 0 ? -0.35 : Math.PI + 0.35;
         hob.facing.rotation.y = damp(hob.facing.rotation.y, targetYaw, 14, dt);
         const chomp = dying ? 0.05 : (Math.sin(st.phase * 1.4) * 0.5 + 0.5) * 0.55 + 0.1;
@@ -683,6 +711,7 @@ export class HdRenderer implements Renderer {
       if (!on || ch < 62 || ch > 68) {
         st.bag.root.visible = st.gold.root.visible = false;
         st.wasCh = 0;
+        st.age = 0;
         continue;
       }
       const [sx, sy] = this.spritePos(f, slot);
@@ -709,7 +738,10 @@ export class HdRenderer implements Renderer {
       } else {
         st.gold.root.visible = false;
         st.bag.root.visible = true;
-        st.bag.root.position.set(x, y, BAG_Z);
+        if (!f.paused) st.age += dt;
+        const drop = 1 - Math.min(1, st.age / 0.4);
+        st.bag.root.position.set(x, y + drop * drop * 2.5, BAG_Z);
+        st.bag.root.scale.setScalar(entrance(st.age, 0.55));
         const tilt = ch == 63 ? -0.2 : ch == 64 ? 0.2 : 0;
         st.tilt = damp(st.tilt, tilt, 30, dt);
         st.bag.pivot.rotation.z = st.tilt;
@@ -753,12 +785,14 @@ export class HdRenderer implements Renderer {
         this.sparks.emit({ x, y, z: EMERALD_Z + 0.3, count: 26, color: 0x5dffb0, color2: 0xe8fff4, speed: 6, life: 0.6, size: 0.3, drag: 2.5 });
         this.sparks.emit({ x, y, z: EMERALD_Z + 0.3, count: 10, color: 0x1fd17a, speed: 3, life: 0.9, size: 0.18, gravity: 10, drag: 0.6 });
       }
+      if (!was && show[i]) this.emAge[i] = -((i % 15) * 0.05 + Math.floor(i / 15) * 0.015);
+      if (!f.paused) this.emAge[i] += dt;
       this.emShown[i] = show[i];
       if (!show[i]) continue;
       const ph = this.emPhase[i];
       this.q.setFromEuler(new THREE.Euler(0.1 * Math.sin(t * 0.7 + ph), Math.sin(t * 0.9 + ph) * 0.6, 0));
       this.v.set(x, y + Math.sin(t * 1.3 + ph) * 0.03, EMERALD_Z);
-      this.m4.compose(this.v, this.q, new THREE.Vector3(1, 1, 1));
+      this.m4.compose(this.v, this.q, new THREE.Vector3(1, 1, 1).multiplyScalar(entrance(this.emAge[i], 0.4)));
       this.emeralds.setMatrixAt(k++, this.m4);
       if (!f.paused && Math.random() < dt * 0.25) this.twinkle(x + (Math.random() - 0.5) * 0.6, y + 0.15, EMERALD_Z + 0.35);
     }
@@ -785,12 +819,20 @@ export class HdRenderer implements Renderer {
     if (sp.sprenf[14] && sp.sprch[14] == 81) {
       const [sx, sy] = this.spritePos(f, 14);
       this.cherry.visible = true;
+      if (!this.cherryWasOn) {
+        this.cherryAge = 0;
+        this.sparks.emit({ x: spriteCx(sx), y: spriteCy(sy), z: ACTOR_Z + 0.3, count: 30, color: 0xff6a80, color2: 0xffffff, speed: 4, life: 0.6, size: 0.3, drag: 3 });
+      }
+      this.cherryWasOn = true;
+      if (!f.paused) this.cherryAge += dt;
+      this.cherry.scale.setScalar(entrance(this.cherryAge, 0.6));
       this.cherry.position.set(spriteCx(sx), spriteCy(sy) + Math.sin(f.time * 2.5) * 0.08, ACTOR_Z + 0.1);
       this.cherry.rotation.y = Math.sin(f.time * 1.4) * 0.5;
       this.cherryLight.position.set(this.cherry.position.x, this.cherry.position.y, 0.6);
       this.cherryLight.intensity = 6 + Math.sin(f.time * 5) * 2;
     } else {
       this.cherry.visible = false;
+      this.cherryWasOn = false;
       this.cherryLight.intensity = 0;
     }
     // Fireball and explosion

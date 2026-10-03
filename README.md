@@ -20,7 +20,7 @@ It's the same game: the same eight levels, the same rules, monster AI, timing an
 | Classic graphics on/off | F2 |
 | Classic sound on/off | F3 |
 | Mute | M |
-| Skip a cut-scene | Any key, click, tap or button |
+| Skip a cut-scene | Press Fire twice (a prompt appears) |
 
 Gamepads work (D-pad or stick, A to fire, Start to pause), and touch devices get an on-screen D-pad and fire button.
 
