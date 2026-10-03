@@ -1059,17 +1059,80 @@ body:not(.has-touch) .skip-hint {
   filter: none;
 }
 
-.ui.hd-attract .panel.menu,
-.ui.hd-attract .panel.boot {
-  justify-self: start;
-  margin-left: max(2vw, 16px);
+/* --- Docked title menu --------------------------------------------------------- */
+
+/* The title menu takes the left side in landscape and the bottom half in portrait; the
+   title scene plays in the rest (--dock-left / --dock-bottom are set by the app). */
+.ui.title .panel-wrap {
+  container-type: size;
+  padding: 12px;
 }
 
-@media (max-width: 760px) {
-  .ui.hd-attract .panel.menu,
-  .ui.hd-attract .panel.boot {
-    justify-self: center;
-    margin-left: 0;
+[data-dock='left'] .ui.title .panel-wrap {
+  right: auto;
+  width: var(--dock-left);
+  padding-left: max(12px, env(safe-area-inset-left));
+}
+
+[data-dock='bottom'] .ui.title .panel-wrap {
+  top: auto;
+  height: var(--dock-bottom);
+  padding-bottom: max(12px, env(safe-area-inset-bottom));
+  /* The scene is only as tall as the screen is wide: fade out whatever lies below it. */
+  background: linear-gradient(to bottom, rgba(7, 6, 10, 0), rgba(7, 6, 10, 0.9) 55%);
+}
+
+[data-dock='bottom'] .ui.title .panel {
+  align-self: end;
+}
+
+[data-dock='left'] .classic-canvas,
+[data-dock='bottom'] .classic-canvas {
+  width: min(100vw - var(--dock-left), (100vh - var(--dock-bottom)) * 1.6);
+  height: min(100vh - var(--dock-bottom), (100vw - var(--dock-left)) / 1.6);
+  place-self: start center;
+  /* Centred in the free part, which also clears the era switch in the corner. */
+  margin-top: calc((100vh - var(--dock-bottom) - min(100vh - var(--dock-bottom), (100vw - var(--dock-left)) / 1.6)) / 2);
+}
+
+[data-dock='left'] .classic-canvas {
+  place-self: center end;
+  margin-top: 0;
+}
+
+/* Phones: not much height to work with, so the buttons pair up. */
+@container (max-height: 560px) {
+  .panel.menu,
+  .panel.boot {
+    padding: 14px 16px;
+  }
+  .panel .logo {
+    font-size: min(2.6rem, 13cqh);
+    margin-bottom: 12px;
+  }
+  .panel.menu .buttons {
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .panel.menu .buttons > * {
+    padding: 9px 6px;
+    font-size: 0.9rem;
+  }
+  .panel.menu .fine {
+    display: none;
+  }
+  .panel.boot .fine {
+    margin-top: 10px;
+  }
+  .panel.boot .era-boot {
+    margin-top: 10px;
+    padding: 8px 14px;
+  }
+  .panel.boot .era-boot b {
+    font-size: 1.35rem;
+  }
+  .panel.menu .lvl-pick {
+    margin-top: 8px;
   }
 }
 
@@ -1102,22 +1165,30 @@ a.button:focus-visible {
   display: none;
 }
 
-.ui.hd-attract .panel.menu {
-  width: min(620px, 100%);
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0 26px;
-  align-items: start;
-}
+@container (min-width: 600px) and (min-height: 480px) {
+  .ui.hd-attract .panel.menu {
+    width: min(620px, 100%);
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0 26px;
+    align-items: start;
+  }
 
-.ui.hd-attract .panel.menu .logo,
-.ui.hd-attract .panel.menu .fine {
-  grid-column: 1 / -1;
-}
+  .ui.hd-attract .panel.menu .logo,
+  .ui.hd-attract .panel.menu .fine {
+    grid-column: 1 / -1;
+  }
 
-.ui.hd-attract .menu-scores {
-  display: block;
-  text-align: left;
+  .ui.hd-attract .menu-scores {
+    display: block;
+    text-align: left;
+    grid-column: 2;
+    grid-row: 2 / span 2;
+  }
+
+  .ui.hd-attract .panel.menu .lvl-pick {
+    grid-column: 1;
+  }
 }
 
 .menu-scores h3 {
@@ -1148,16 +1219,6 @@ a.button:focus-visible {
 .menu-scores .ini {
   font-family: ui-monospace, 'Cascadia Mono', Menlo, monospace;
   letter-spacing: 0.3em;
-}
-
-@media (max-width: 760px), (max-height: 520px) {
-  .ui.hd-attract .panel.menu {
-    grid-template-columns: 1fr;
-    width: min(440px, 100%);
-  }
-  .ui.hd-attract .menu-scores {
-    display: none;
-  }
 }
 
 /* Keep the wordmark centred whether or not player 2 is shown. */
@@ -1220,10 +1281,6 @@ a.button:focus-visible {
   font-size: 1.1rem;
 }
 
-.ui.hd-attract .panel.menu .lvl-pick {
-  grid-column: 1;
-}
-
 /* Key rebinding */
 .key-row {
   display: grid;
@@ -1243,11 +1300,6 @@ a.button:focus-visible {
 .key-row button.listening {
   border-color: var(--gold);
   color: var(--gold);
-}
-
-.ui.hd-attract .menu-scores {
-  grid-column: 2;
-  grid-row: 2 / span 2;
 }
 
 .stage.loading canvas {

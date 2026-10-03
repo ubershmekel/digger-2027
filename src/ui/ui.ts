@@ -202,6 +202,7 @@ export class Ui {
     this.panel.innerHTML = '';
     this.panel.hidden = screen == null;
     this.root.classList.toggle('dim', screen != null && screen != 'menu' && screen != 'boot');
+    this.root.classList.toggle('title', screen == 'menu' || screen == 'boot');
     if (!screen) return;
     const el = this.build(screen);
     this.panel.appendChild(el);

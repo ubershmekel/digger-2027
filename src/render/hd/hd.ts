@@ -145,6 +145,8 @@ export class HdRenderer implements Renderer {
   private shake = 0;
   private flash = 0;
   private zoom = 0;
+  /** Eased copy of the title menu's dock (CSS px); null until the first frame. */
+  private dock: { left: number; bottom: number } | null = null;
   private lastPos = new THREE.Vector3();
   private lastScene = '';
   private reducedMotion = false;
@@ -331,8 +333,6 @@ export class HdRenderer implements Renderer {
     this.renderer.setSize(w, h, false);
     this.composer.setPixelRatio(ratio);
     this.composer.setSize(w, h);
-    this.camera.aspect = w / h;
-    this.camera.updateProjectionMatrix();
     this.sparks.setViewport(h * ratio);
     this.dust.setViewport(h * ratio);
     (this.sparkles.material as THREE.ShaderMaterial).uniforms.uScale.value = h * ratio * 0.9;
@@ -1005,7 +1005,18 @@ export class HdRenderer implements Renderer {
 
   private updateCamera(f: FrameInfo, dt: number): void {
     const g = f.game;
-    const aspect = this.size.w / this.size.h;
+    // Frame the scene in the part of the screen the docked title menu leaves free, sliding
+    // over as the menu comes and goes.
+    const snap = !this.dock || this.reducedMotion;
+    const dock = (this.dock ??= { left: 0, bottom: 0 });
+    dock.left = snap ? f.dock.left : damp(dock.left, f.dock.left, 7, dt);
+    dock.bottom = snap ? f.dock.bottom : damp(dock.bottom, f.dock.bottom, 7, dt);
+    const viewW = Math.max(1, this.size.w - dock.left);
+    const viewH = Math.max(1, this.size.h - dock.bottom);
+    const aspect = viewW / viewH;
+    this.camera.aspect = aspect;
+    if (dock.left > 0.5 || dock.bottom > 0.5) this.camera.setViewOffset(viewW, viewH, -dock.left, 0, this.size.w, this.size.h);
+    else this.camera.clearViewOffset();
     const fov = THREE.MathUtils.degToRad(this.camera.fov);
     // Fit the playfield plus the grassy surface and a band of sky for the HUD.
     const halfW = (WIDTH * S) / 2 + 0.8;
@@ -1013,7 +1024,7 @@ export class HdRenderer implements Renderer {
     const bottom = wy(200) - 0.5;
     const fit = (t: number) => Math.max((t - bottom) / 2 / Math.tan(fov / 2), halfW / (Math.tan(fov / 2) * aspect));
     // The HUD needs ~70 px above the grass; on short landscape phones that is a lot of world.
-    const worldPerPx = (2 * fit(top) * Math.tan(fov / 2)) / Math.max(1, this.size.h);
+    const worldPerPx = (2 * fit(top) * Math.tan(fov / 2)) / viewH;
     top += Math.max(0, 74 * worldPerPx - (wy(0) - wy(14) + 1.4));
     const cy = (top + bottom) / 2;
     const dist = fit(top);

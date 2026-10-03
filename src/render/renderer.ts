@@ -34,6 +34,8 @@ export interface FrameInfo {
   /** Events produced by the sim since the last frame (empty after a skip). */
   events: SimEvent[];
   paused: boolean;
+  /** CSS px of the screen the docked title menu covers; the scene is framed in the rest. */
+  dock: { left: number; bottom: number };
 }
 
 export interface Renderer {

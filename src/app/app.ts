@@ -441,6 +441,28 @@ export class App {
     this.active.resize(this.stage.clientWidth, this.stage.clientHeight, dpr);
   }
 
+  private dock = { left: 0, bottom: 0 };
+
+  /**
+   * The title menu docks to the bottom half in portrait and to the left in landscape, so the
+   * title scene plays unobstructed in the rest. Sub-screens opened from it keep that framing.
+   */
+  private syncDock(on: boolean): void {
+    const w = this.stage.clientWidth;
+    const h = this.stage.clientHeight;
+    let left = 0;
+    let bottom = 0;
+    if (on && h > w) bottom = Math.round(h / 2);
+    // Wide screens have room for the leaderboard beside the buttons.
+    else if (on) left = w >= 1100 && h > 520 ? 660 : Math.round(Math.max(300, Math.min(480, w * 0.44)));
+    if (left == this.dock.left && bottom == this.dock.bottom) return;
+    this.dock = { left, bottom };
+    const root = this.stage.parentElement!;
+    root.dataset.dock = left ? 'left' : bottom ? 'bottom' : '';
+    root.style.setProperty('--dock-left', `${left}px`);
+    root.style.setProperty('--dock-bottom', `${bottom}px`);
+  }
+
   // --- Frame loop ----------------------------------------------------------------
 
   private frame(now: number, raf = true): void {
@@ -460,6 +482,7 @@ export class App {
       time: (now - this.start) / 1000,
       events,
       paused: this.driver.paused,
+      dock: this.dock,
     });
     if (raf) requestAnimationFrame((t) => this.frame(t));
   }
@@ -496,6 +519,7 @@ export class App {
     this.fadeEl.classList.toggle('on', fade);
     const hd = this.active !== this.classic;
     this.ui.root.classList.toggle('hd-attract', this.settings.graphics == 'hd' && g.scene == 'attract');
+    this.syncDock(g.scene == 'attract' && this.ui.screen != null);
     const playing = g.inGame && g.scene != 'initials';
     this.ui.updateEra(this.ui.screen == 'menu' || this.ui.screen == null);
     this.ui.setHudVisible(hd && playing);
