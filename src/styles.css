@@ -64,6 +64,13 @@ body {
   align-self: start;
 }
 
+/* Upright, the screen spans the full width: start below the pause and era buttons. */
+@media (orientation: portrait) {
+  .has-touch .classic-canvas {
+    margin-top: calc(max(16px, env(safe-area-inset-top)) + 56px);
+  }
+}
+
 .stage[data-mode='hd'] canvas {
   position: absolute;
   inset: 0;
