@@ -934,11 +934,14 @@ export class HdRenderer implements Renderer {
     const fov = THREE.MathUtils.degToRad(this.camera.fov);
     // Fit the playfield plus the grassy surface and a band of sky for the HUD.
     const halfW = (WIDTH * S) / 2 + 0.8;
-    const top = wy(0) + 1.4;
+    let top = wy(0) + 1.4;
     const bottom = wy(200) - 0.5;
-    const halfH = (top - bottom) / 2;
+    const fit = (t: number) => Math.max((t - bottom) / 2 / Math.tan(fov / 2), halfW / (Math.tan(fov / 2) * aspect));
+    // The HUD needs ~70 px above the grass; on short landscape phones that is a lot of world.
+    const worldPerPx = (2 * fit(top) * Math.tan(fov / 2)) / Math.max(1, this.size.h);
+    top += Math.max(0, 74 * worldPerPx - (wy(0) - wy(14) + 1.4));
     const cy = (top + bottom) / 2;
-    const dist = Math.max(halfH / Math.tan(fov / 2), halfW / (Math.tan(fov / 2) * aspect));
+    const dist = fit(top);
     const tilt = THREE.MathUtils.degToRad(7);
     let tx = 0;
     let ty = cy;

@@ -92,6 +92,8 @@ export class App {
     this.ui.show('boot');
 
     addEventListener('resize', () => this.resize());
+    new ResizeObserver(() => this.resize()).observe(this.stage);
+    addEventListener('orientationchange', () => setTimeout(() => this.resize(), 300));
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) this.autoPause();
     });
@@ -296,7 +298,17 @@ export class App {
   private async unlockAudio(): Promise<void> {
     if (!this.audio) {
       try {
+        // Play through the ringer switch on iOS (Safari 17+), like a music app.
+        const nav = navigator as Navigator & { audioSession?: { type: string } };
+        if (nav.audioSession) nav.audioSession.type = 'playback';
         this.audio = new AudioEngine();
+        // Resume right here, still inside the user's tap: iOS ignores later resumes.
+        void this.audio.ctx.resume().catch(() => {});
+        // And retry on every later interaction until it is running.
+        const retry = () => {
+          if (this.audio && this.audio.ctx.state != 'running') void this.audio.ctx.resume().catch(() => {});
+        };
+        for (const ev of ['pointerdown', 'touchend', 'keydown']) addEventListener(ev, retry, { capture: true, passive: true });
         this.audio.setHdFactory(async (engine) => (await import('../audio/hd/jazz')).createJazz(engine));
         this.applyVolumes();
         await this.audio.setMode(this.settings.audio, this.game.sound.tune);
