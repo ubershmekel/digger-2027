@@ -12,7 +12,8 @@
     "e2e": "playwright test",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint --deny-warnings src tests tools public/sw.js",
-    "extract": "node tools/extract-data.mjs"
+    "extract": "node tools/extract-data.mjs",
+    "share-card": "node tools/make-share-card.mjs"
   },
   "dependencies": {
     "three": "^0.186.1"
