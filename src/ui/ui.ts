@@ -167,7 +167,7 @@ export class Ui {
     if (!screen) return;
     const el = this.build(screen);
     this.panel.appendChild(el);
-    requestAnimationFrame(() => el.querySelector<HTMLElement>('[autofocus], button, input')?.focus());
+    requestAnimationFrame(() => el.querySelector<HTMLElement>('[autofocus], button:not(.close), input')?.focus());
   }
 
   back(): void {
@@ -280,16 +280,18 @@ export class Ui {
           }${e?.assisted ? '<sup title="Made with turn buffering or a non-default speed">*</sup>' : ''}</span></li>`;
         }).join('');
         const el = h(`<div class="panel scores">
+          <button class="close" data-a="back" aria-label="Close">×</button>
           <h2>High Scores</h2>
           <ol class="table">${rows}</ol>
           <p class="fine">* assisted: turn buffering on or a non-default speed</p>
           <nav class="buttons row"><button data-a="back" autofocus>Back</button></nav>
         </div>`);
-        el.querySelector('[data-a=back]')!.addEventListener('click', () => this.back());
+        el.querySelectorAll('[data-a=back]').forEach((b) => b.addEventListener('click', () => this.back()));
         return el;
       }
       case 'help': {
         const el = h(`<div class="panel help">
+          <button class="close" data-a="back" aria-label="Close">×</button>
           <h2>How to Play</h2>
           <div class="help-grid">
             <p><b>Dig</b> with the arrow keys or WASD. Collect every <b class="em">emerald</b>, or defeat every monster, to clear the level.</p>
@@ -302,7 +304,7 @@ export class Ui {
           <p class="fine">Esc pause · F2 classic graphics · F4 classic sound · M mute · Fire twice skips a cut-scene · gamepads supported</p>
           <nav class="buttons row"><button data-a="back" autofocus>Back</button></nav>
         </div>`);
-        el.querySelector('[data-a=back]')!.addEventListener('click', () => this.back());
+        el.querySelectorAll('[data-a=back]').forEach((b) => b.addEventListener('click', () => this.back()));
         return el;
       }
       case 'settings':
@@ -365,6 +367,7 @@ export class Ui {
         (s[key] as number) * 100,
       )}"><output>${Math.round((s[key] as number) * 100)}</output></label>`;
     const el = h(`<div class="panel settings">
+      <button class="close" data-a="back" aria-label="Close">×</button>
       <h2>Settings</h2>
       <div class="settings-grid">
         <section>
