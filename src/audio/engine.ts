@@ -91,6 +91,9 @@ export class AudioEngine {
 
   setPaused(paused: boolean): void {
     for (const b of Object.values(this.backends)) b?.setPaused(paused);
+    // Freezing the whole context pauses music and effects mid-note, sample-accurately.
+    if (paused) void this.ctx.suspend().catch(() => {});
+    else void this.ctx.resume().catch(() => {});
   }
 }
 

@@ -1,5 +1,584 @@
+// HD audio backend: jazz arrangements bounced offline into loopable buffers,
+// and sound effects synthesized live, each echoing its original's pitch contour.
+import type { SoundCmd } from '../../sim/sound';
 import type { AudioBackend, AudioEngine } from '../engine';
+import { EMERALD_FREQS, PIT_HZ } from '../tunes';
+import { bonusTheme, dirge, levelDone, mainTheme, type Cue, type Inst } from './compose';
+import * as I from './instruments';
 
-export async function createJazz(_engine: AudioEngine): Promise<AudioBackend> {
-  throw new Error('not implemented yet');
+type CueId = 'main' | 'bonus' | 'dirge' | 'levdone';
+
+const LEVELS: Record<Inst, number> = {
+  rhodes: 0.9,
+  vibes: 1,
+  bass: 1,
+  trumpet: 0.75,
+  strings: 1,
+  piano: 1,
+  ride: 0.9,
+  hat: 0.8,
+  brush: 0.9,
+  swish: 0.9,
+  snare: 0.8,
+  kick: 0.9,
+  swell: 1,
+};
+
+const DRUMS: ReadonlySet<Inst> = new Set<Inst>(['ride', 'hat', 'brush', 'swish', 'snare', 'kick']);
+const drumCache = new Map<string, Promise<AudioBuffer>>();
+
+/** Renders one drum hit at full velocity; cue renders replay it, which is far cheaper than resynthesizing. */
+function drumSample(i: Inst, sampleRate: number): Promise<AudioBuffer> {
+  const key = i + sampleRate;
+  let p = drumCache.get(key);
+  if (!p) {
+    const ctx = new OfflineAudioContext(2, Math.ceil(sampleRate * (i == 'ride' ? 1.6 : 0.7)), sampleRate);
+    const out = ctx.destination;
+    if (i == 'ride') I.ride(ctx, out, 0, 1);
+    else if (i == 'hat') I.hat(ctx, out, 0, 1);
+    else if (i == 'brush') I.brush(ctx, out, 0, 1);
+    else if (i == 'swish') I.brush(ctx, out, 0, 1, true);
+    else if (i == 'snare') I.snare(ctx, out, 0, 1);
+    else I.kick(ctx, out, 0, 1);
+    p = ctx.startRendering();
+    drumCache.set(key, p);
+  }
+  return p;
+}
+
+/** Renders a cue offline. Looping cues get their reverb tail folded onto the start so the loop is seamless. */
+export async function render(cue: Cue, sampleRate: number): Promise<AudioBuffer> {
+  const spb = 60 / cue.bpm;
+  const tail = 3;
+  const seconds = cue.beats * spb + tail;
+  const ctx = new OfflineAudioContext(2, Math.ceil(seconds * sampleRate), sampleRate);
+  const comp = ctx.createDynamicsCompressor();
+  comp.threshold.value = -16;
+  comp.ratio.value = 2.5;
+  comp.attack.value = 0.01;
+  comp.release.value = 0.2;
+  const warmth = ctx.createBiquadFilter();
+  warmth.type = 'highshelf';
+  warmth.frequency.value = 9000;
+  warmth.gain.value = -3;
+  comp.connect(warmth).connect(ctx.destination);
+  const dry = ctx.createGain();
+  dry.connect(comp);
+  const verb = ctx.createConvolver();
+  verb.buffer = I.makeImpulse(ctx, 2.6, 2.4);
+  const send = ctx.createGain();
+  send.gain.value = cue.reverb;
+  send.connect(verb).connect(comp);
+  const buses = new Map<Inst, GainNode>();
+  const bus = (i: Inst) => {
+    let g = buses.get(i);
+    if (!g) {
+      g = ctx.createGain();
+      g.gain.value = LEVELS[i];
+      g.connect(dry);
+      // Drums and bass stay drier than the melodic instruments.
+      const wet = ctx.createGain();
+      wet.gain.value = i == 'bass' || i == 'kick' ? 0.2 : i == 'ride' || i == 'hat' ? 0.5 : 1;
+      g.connect(wet).connect(send);
+      buses.set(i, g);
+    }
+    return g;
+  };
+  const toSec = (beat: number) => {
+    const b = Math.floor(beat + 1e-6);
+    const f = beat - b;
+    // Swing: stretch the first half of each beat, compress the second.
+    const sf = f < 0.5 ? (f / 0.5) * cue.swing : cue.swing + ((f - 0.5) / 0.5) * (1 - cue.swing);
+    return (b + sf) * spb;
+  };
+  const samples = new Map<Inst, AudioBuffer>();
+  for (const i of DRUMS) samples.set(i, await drumSample(i, sampleRate));
+  let seed = 99;
+  const rnd = () => ((seed = (Math.imul(seed, 1103515245) + 12345) >>> 0) / 4294967296 - 0.5);
+  for (const n of cue.notes) {
+    const t = Math.max(0, toSec(n.t) + rnd() * 0.012);
+    const d = Math.max(0.05, toSec(n.t + n.d) - toSec(n.t));
+    const out = bus(n.i);
+    const sample = samples.get(n.i);
+    if (sample) {
+      const src = ctx.createBufferSource();
+      src.buffer = sample;
+      // Tiny pitch variance keeps repeated hits from sounding machine-gunned.
+      src.playbackRate.value = 1 + rnd() * 0.04;
+      const g = ctx.createGain();
+      g.gain.value = n.v;
+      src.connect(g).connect(out);
+      src.start(t);
+      continue;
+    }
+    switch (n.i) {
+      case 'rhodes':
+        I.rhodes(ctx, out, t, d, n.m, n.v, n.pan);
+        break;
+      case 'vibes':
+        I.vibes(ctx, out, t, d, n.m, n.v, n.pan);
+        break;
+      case 'bass':
+        I.bass(ctx, out, t, d, n.m, n.v);
+        break;
+      case 'trumpet':
+        I.trumpet(ctx, out, t, d, n.m, n.v, n.pan);
+        break;
+      case 'strings':
+        I.strings(ctx, out, t, d, n.m, n.v, n.pan);
+        break;
+      case 'piano':
+        I.piano(ctx, out, t, d, n.m, n.v, n.pan);
+        break;
+      case 'ride':
+        I.ride(ctx, out, t, n.v);
+        break;
+      case 'hat':
+        I.hat(ctx, out, t, n.v);
+        break;
+      case 'brush':
+        I.brush(ctx, out, t, n.v);
+        break;
+      case 'swish':
+        I.brush(ctx, out, t, n.v, true);
+        break;
+      case 'snare':
+        I.snare(ctx, out, t, n.v);
+        break;
+      case 'kick':
+        I.kick(ctx, out, t, n.v);
+        break;
+      case 'swell':
+        I.swell(ctx, out, t, d, n.v);
+        break;
+    }
+  }
+  const buf = await ctx.startRendering();
+  normalize(buf, 0.16, 0.85);
+  if (!cue.loopBeats) return buf;
+  const loopLen = Math.round(cue.loopBeats * spb * sampleRate);
+  const out = new AudioBuffer({ length: loopLen, numberOfChannels: 2, sampleRate });
+  for (let ch = 0; ch < 2; ch++) {
+    const src = buf.getChannelData(ch);
+    const dst = out.getChannelData(ch);
+    dst.set(src.subarray(0, loopLen));
+    for (let i = loopLen; i < src.length; i++) dst[i - loopLen] += src[i];
+  }
+  return out;
+}
+
+/** Scales a buffer toward a target RMS without letting peaks exceed `peak`. */
+function normalize(b: AudioBuffer, rms: number, peak: number): void {
+  let sum = 0;
+  let max = 0;
+  let n = 0;
+  for (let ch = 0; ch < b.numberOfChannels; ch++) {
+    const d = b.getChannelData(ch);
+    for (let i = 0; i < d.length; i++) {
+      const v = d[i];
+      sum += v * v;
+      const a = Math.abs(v);
+      if (a > max) max = a;
+    }
+    n += d.length;
+  }
+  const cur = Math.sqrt(sum / n) || 1;
+  const k = Math.min(rms / cur, peak / (max || 1));
+  for (let ch = 0; ch < b.numberOfChannels; ch++) {
+    const d = b.getChannelData(ch);
+    for (let i = 0; i < d.length; i++) d[i] *= k;
+  }
+}
+
+interface Playing {
+  id: CueId;
+  src: AudioBufferSourceNode;
+  gain: GainNode;
+}
+
+const hz = (div: number) => PIT_HZ / div;
+const ftom = (f: number) => 69 + 12 * Math.log2(f / 440);
+
+class Jazz implements AudioBackend {
+  private ctx: AudioContext;
+  private music: AudioNode;
+  private sfx: GainNode;
+  private buffers = new Map<CueId, AudioBuffer>();
+  private pending = new Map<CueId, Promise<AudioBuffer>>();
+  private playing: Playing | null = null;
+  private wanted: CueId | null = null;
+  private falling: { stop(): void } | null = null;
+  private firing: { stop(): void } | null = null;
+  private eatCount = 0;
+  private lastBonusPing = 0;
+  private bonusPingHigh = false;
+  private wobbleHigh = false;
+
+  constructor(engine: AudioEngine) {
+    this.ctx = engine.ctx;
+    this.music = engine.music;
+    // Effects get a little room so they sit with the music.
+    this.sfx = this.ctx.createGain();
+    this.sfx.connect(engine.sfx);
+    const verb = this.ctx.createConvolver();
+    verb.buffer = I.makeImpulse(this.ctx, 1.4, 3);
+    const send = this.ctx.createGain();
+    send.gain.value = 0.18;
+    this.sfx.connect(send).connect(verb).connect(engine.sfx);
+  }
+
+  /** Bounces the cues in priority order. */
+  async prepare(): Promise<void> {
+    const order: [CueId, () => Cue][] = [
+      ['main', mainTheme],
+      ['levdone', levelDone],
+      ['dirge', dirge],
+      ['bonus', bonusTheme],
+    ];
+    for (const [id, make] of order) await this.load(id, make);
+  }
+
+  private load(id: CueId, make: () => Cue): Promise<AudioBuffer> {
+    let p = this.pending.get(id);
+    if (!p) {
+      p = render(make(), this.ctx.sampleRate).then((b) => {
+        this.buffers.set(id, b);
+        if (this.wanted == id && this.playing?.id != id) this.start(id);
+        return b;
+      });
+      this.pending.set(id, p);
+    }
+    return p;
+  }
+
+  private start(id: CueId): void {
+    const buf = this.buffers.get(id);
+    this.stopMusic(0.12);
+    if (!buf) return; // starts once rendered (see load)
+    const t = this.ctx.currentTime;
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf;
+    src.loop = id == 'main' || id == 'bonus';
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0, t);
+    gain.gain.linearRampToValueAtTime(1, t + 0.04);
+    src.connect(gain).connect(this.music);
+    src.start(t + 0.01);
+    this.playing = { id, src, gain };
+    src.onended = () => {
+      if (this.playing?.src === src) this.playing = null;
+    };
+  }
+
+  private stopMusic(fade: number): void {
+    const p = this.playing;
+    if (!p) return;
+    const t = this.ctx.currentTime;
+    p.gain.gain.cancelScheduledValues(t);
+    p.gain.gain.setValueAtTime(p.gain.gain.value, t);
+    p.gain.gain.linearRampToValueAtTime(0, t + fade);
+    p.src.stop(t + fade + 0.05);
+    this.playing = null;
+  }
+
+  private play(id: CueId): void {
+    this.wanted = id;
+    this.start(id);
+  }
+
+  private stopLoops(): void {
+    this.falling?.stop();
+    this.falling = null;
+    this.firing?.stop();
+    this.firing = null;
+  }
+
+  command(cmd: SoundCmd, arg: number): void {
+    const ctx = this.ctx;
+    const t = ctx.currentTime + 0.005;
+    const out = this.sfx;
+    switch (cmd) {
+      case 'music':
+        if (arg == 0) this.eatCount = 0;
+        this.play(arg == 0 ? 'bonus' : arg == 1 ? 'main' : 'dirge');
+        break;
+      case 'musicoff':
+        this.wanted = null;
+        this.stopMusic(0.5);
+        break;
+      case 'soundstop':
+      case 'killsound':
+        this.wanted = null;
+        this.stopMusic(0.25);
+        this.stopLoops();
+        break;
+      case 'soundlevdone':
+        this.stopLoops();
+        this.play('levdone');
+        break;
+      case 'soundem':
+        // A soft woody tick as the gem comes loose.
+        I.brush(ctx, out, t, 0.6);
+        break;
+      case 'soundemerald': {
+        const m = Math.round(ftom(hz(EMERALD_FREQS[arg] ?? EMERALD_FREQS[0])));
+        I.vibes(ctx, out, t, 0.35, m, 0.75, 0.15);
+        I.vibes(ctx, out, t + 0.01, 0.3, m + 12, 0.18, -0.15);
+        if (arg == 7) for (const [k, d] of [7, 11, 14].entries()) I.vibes(ctx, out, t + 0.07 * (k + 1), 0.6, m + d, 0.5, 0.3);
+        break;
+      }
+      case 'soundfall':
+        this.falling?.stop();
+        this.falling = this.whistle(t);
+        break;
+      case 'soundfalloff':
+        this.falling?.stop();
+        this.falling = null;
+        break;
+      case 'soundwobble':
+        this.creak(t, (this.wobbleHigh = !this.wobbleHigh));
+        break;
+      case 'soundwobbleoff':
+        break;
+      case 'soundbreak':
+        I.kick(ctx, out, t, 0.9);
+        I.brush(ctx, out, t, 1, true);
+        this.jingle(t + 0.03, 9, 0.5);
+        break;
+      case 'soundgold': {
+        [84, 88, 91, 96].forEach((m, k) => I.vibes(ctx, out, t + k * 0.05, 0.4, m, 0.55, -0.2 + k * 0.15));
+        this.jingle(t, 7, 0.35);
+        break;
+      }
+      case 'soundfire':
+        this.firing?.stop();
+        this.firing = this.fireball(t);
+        break;
+      case 'soundfireoff':
+        this.firing?.stop();
+        this.firing = null;
+        break;
+      case 'soundexplode':
+        this.firing?.stop();
+        this.firing = null;
+        this.boom(t);
+        break;
+      case 'soundeatm':
+        this.gulp(t, this.eatCount++);
+        break;
+      case 'soundddie':
+        this.sadTrombone(t);
+        break;
+      case 'sound1up':
+        [62, 65, 69, 72, 76, 81].forEach((m, k) => I.vibes(ctx, out, t + k * 0.07, 0.5, m + 12, 0.55, -0.3 + k * 0.12));
+        break;
+      case 'soundbonus':
+        // Rate-limited two-tone ping while the bonus starts and runs out.
+        if (t - this.lastBonusPing > 0.14) {
+          this.lastBonusPing = t;
+          this.bonusPingHigh = !this.bonusPingHigh;
+          I.vibes(ctx, out, t, 0.12, this.bonusPingHigh ? 93 : 88, 0.35, this.bonusPingHigh ? 0.3 : -0.3);
+        }
+        break;
+      case 'soundbonusoff':
+        break;
+    }
+  }
+
+  // --- Effect recipes ------------------------------------------------------------
+
+  /** Falling bag: a gliding whistle with a breathy whoosh, like the original's dropping tone. */
+  private whistle(t: number): { stop(): void } {
+    const ctx = this.ctx;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.09, t + 0.05);
+    g.connect(this.sfx);
+    const o = ctx.createOscillator();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(1100, t);
+    o.frequency.exponentialRampToValueAtTime(330, t + 2.2);
+    o.connect(g);
+    o.start(t);
+    const n = ctx.createBufferSource();
+    n.buffer = I.noiseBuffer(ctx);
+    n.loop = true;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.setValueAtTime(2200, t);
+    bp.frequency.exponentialRampToValueAtTime(700, t + 2.2);
+    bp.Q.value = 1.5;
+    const ng = ctx.createGain();
+    ng.gain.value = 0.5;
+    n.connect(bp).connect(ng).connect(g);
+    n.start(t);
+    return {
+      stop: () => {
+        const s = ctx.currentTime;
+        g.gain.cancelScheduledValues(s);
+        g.gain.setValueAtTime(g.gain.value, s);
+        g.gain.linearRampToValueAtTime(0, s + 0.06);
+        o.stop(s + 0.1);
+        n.stop(s + 0.1);
+      },
+    };
+  }
+
+  /** Wobbling bag: a short leather-and-wood creak, alternating pitch like the original's warble. */
+  private creak(t: number, high: boolean): void {
+    const ctx = this.ctx;
+    const n = ctx.createBufferSource();
+    n.buffer = I.noiseBuffer(ctx);
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.setValueAtTime(high ? 520 : 380, t);
+    bp.frequency.linearRampToValueAtTime(high ? 640 : 300, t + 0.12);
+    bp.Q.value = 9;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.5, t + 0.02);
+    g.gain.setTargetAtTime(0, t + 0.06, 0.04);
+    n.connect(bp).connect(g).connect(this.sfx);
+    n.start(t, Math.random());
+    n.stop(t + 0.3);
+  }
+
+  /** Coins: bright staggered pings. */
+  private jingle(t: number, count: number, vel: number): void {
+    const ctx = this.ctx;
+    for (let k = 0; k < count; k++) {
+      const at = t + k * 0.035 + Math.random() * 0.03;
+      const f = 2600 + Math.random() * 2600;
+      for (const r of [1, 2.76]) {
+        const o = ctx.createOscillator();
+        o.frequency.value = f * r;
+        const g = ctx.createGain();
+        g.gain.setValueAtTime(vel * 0.06 * (r == 1 ? 1 : 0.4), at);
+        g.gain.setTargetAtTime(0, at, 0.05 + Math.random() * 0.06);
+        const p = ctx.createStereoPanner();
+        p.pan.value = Math.random() * 1.2 - 0.6;
+        o.connect(g).connect(p).connect(this.sfx);
+        o.start(at);
+        o.stop(at + 0.5);
+      }
+    }
+  }
+
+  /** Fireball: a soft "pew" launch, then a crackling hiss while it flies. */
+  private fireball(t: number): { stop(): void } {
+    const ctx = this.ctx;
+    const o = ctx.createOscillator();
+    o.type = 'triangle';
+    o.frequency.setValueAtTime(1500, t);
+    o.frequency.exponentialRampToValueAtTime(380, t + 0.16);
+    const og = ctx.createGain();
+    og.gain.setValueAtTime(0.18, t);
+    og.gain.setTargetAtTime(0, t + 0.05, 0.05);
+    o.connect(og).connect(this.sfx);
+    o.start(t);
+    o.stop(t + 0.5);
+    const n = ctx.createBufferSource();
+    n.buffer = I.noiseBuffer(ctx);
+    n.loop = true;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 1400;
+    bp.Q.value = 0.8;
+    const lfo = ctx.createOscillator();
+    lfo.frequency.value = 23;
+    const ld = ctx.createGain();
+    ld.gain.value = 600;
+    lfo.connect(ld).connect(bp.frequency);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.06, t + 0.08);
+    n.connect(bp).connect(g).connect(this.sfx);
+    n.start(t);
+    lfo.start(t);
+    return {
+      stop: () => {
+        const s = ctx.currentTime;
+        g.gain.cancelScheduledValues(s);
+        g.gain.setValueAtTime(g.gain.value, s);
+        g.gain.linearRampToValueAtTime(0, s + 0.05);
+        n.stop(s + 0.08);
+        lfo.stop(s + 0.08);
+      },
+    };
+  }
+
+  private boom(t: number): void {
+    const ctx = this.ctx;
+    const n = ctx.createBufferSource();
+    n.buffer = I.noiseBuffer(ctx);
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.setValueAtTime(2400, t);
+    lp.frequency.exponentialRampToValueAtTime(200, t + 0.4);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.5, t);
+    g.gain.setTargetAtTime(0, t, 0.12);
+    n.connect(lp).connect(g).connect(this.sfx);
+    n.start(t, Math.random());
+    n.stop(t + 0.8);
+    I.kick(ctx, this.sfx, t, 0.6);
+  }
+
+  /** Eating a monster in bonus mode: a cartoony gulp that climbs with each consecutive bite. */
+  private gulp(t: number, k: number): void {
+    const ctx = this.ctx;
+    const up = Math.pow(2, Math.min(k, 6) * (3 / 12));
+    for (let rep = 0; rep < 2; rep++) {
+      const at = t + rep * 0.11;
+      const o = ctx.createOscillator();
+      o.type = 'square';
+      o.frequency.setValueAtTime(620 * up, at);
+      o.frequency.exponentialRampToValueAtTime(150 * up, at + 0.1);
+      const lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = 1400 * up;
+      lp.Q.value = 6;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.16, at);
+      g.gain.setTargetAtTime(0, at + 0.05, 0.03);
+      o.connect(lp).connect(g).connect(this.sfx);
+      o.start(at);
+      o.stop(at + 0.25);
+    }
+    I.vibes(ctx, this.sfx, t + 0.2, 0.3, 74 + Math.min(k, 6) * 3, 0.4, 0.2);
+  }
+
+  /** Digger death: a muted "wah wah wah waaah", falling like the original's sweep. */
+  private sadTrombone(t: number): void {
+    const ctx = this.ctx;
+    const notes = [59, 58, 57, 56];
+    notes.forEach((m, k) => {
+      const last = k == notes.length - 1;
+      I.trumpet(ctx, this.sfx, t + k * 0.32, last ? 1.1 : 0.28, m - 12, 0.75, 0);
+    });
+  }
+
+  resync(tune: number): void {
+    this.stopLoops();
+    if (tune < 0) {
+      this.wanted = null;
+      this.stopMusic(0.2);
+    } else this.play(tune == 0 ? 'bonus' : tune == 1 ? 'main' : 'dirge');
+  }
+
+  setPaused(): void {
+    /* The engine suspends the whole AudioContext. */
+  }
+
+  silence(): void {
+    this.wanted = null;
+    this.stopMusic(0.15);
+    this.stopLoops();
+  }
+}
+
+export async function createJazz(engine: AudioEngine): Promise<AudioBackend> {
+  const j = new Jazz(engine);
+  void j.prepare();
+  return j;
 }
