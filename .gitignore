@@ -7,3 +7,5 @@ dist/
 # Reference implementation (local only, used for inspiration and as the behaviour spec)
 old/
 .claude/
+test-results/
+playwright-report/

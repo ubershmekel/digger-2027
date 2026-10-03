@@ -50,40 +50,7 @@ function drumSample(i: Inst, sampleRate: number): Promise<AudioBuffer> {
 export async function render(cue: Cue, sampleRate: number): Promise<AudioBuffer> {
   const spb = 60 / cue.bpm;
   const tail = 3;
-  const seconds = cue.beats * spb + tail;
-  const ctx = new OfflineAudioContext(2, Math.ceil(seconds * sampleRate), sampleRate);
-  const comp = ctx.createDynamicsCompressor();
-  comp.threshold.value = -16;
-  comp.ratio.value = 2.5;
-  comp.attack.value = 0.01;
-  comp.release.value = 0.2;
-  const warmth = ctx.createBiquadFilter();
-  warmth.type = 'highshelf';
-  warmth.frequency.value = 9000;
-  warmth.gain.value = -3;
-  comp.connect(warmth).connect(ctx.destination);
-  const dry = ctx.createGain();
-  dry.connect(comp);
-  const verb = ctx.createConvolver();
-  verb.buffer = I.makeImpulse(ctx, 2.6, 2.4);
-  const send = ctx.createGain();
-  send.gain.value = cue.reverb;
-  send.connect(verb).connect(comp);
-  const buses = new Map<Inst, GainNode>();
-  const bus = (i: Inst) => {
-    let g = buses.get(i);
-    if (!g) {
-      g = ctx.createGain();
-      g.gain.value = LEVELS[i];
-      g.connect(dry);
-      // Drums and bass stay drier than the melodic instruments.
-      const wet = ctx.createGain();
-      wet.gain.value = i == 'bass' || i == 'kick' ? 0.2 : i == 'ride' || i == 'hat' ? 0.5 : 1;
-      g.connect(wet).connect(send);
-      buses.set(i, g);
-    }
-    return g;
-  };
+  const music = cue.beats * spb;
   const toSec = (beat: number) => {
     const b = Math.floor(beat + 1e-6);
     const f = beat - b;
@@ -91,78 +58,137 @@ export async function render(cue: Cue, sampleRate: number): Promise<AudioBuffer>
     const sf = f < 0.5 ? (f / 0.5) * cue.swing : cue.swing + ((f - 0.5) / 0.5) * (1 - cue.swing);
     return (b + sf) * spb;
   };
-  const samples = new Map<Inst, AudioBuffer>();
-  for (const i of DRUMS) samples.set(i, await drumSample(i, sampleRate));
   let seed = 99;
   const rnd = () => ((seed = (Math.imul(seed, 1103515245) + 12345) >>> 0) / 4294967296 - 0.5);
-  for (const n of cue.notes) {
+  // Humanized timing for every note, fixed up front so the result is deterministic.
+  const timed = cue.notes.map((n) => {
     const t = Math.max(0, toSec(n.t) + rnd() * 0.012);
-    const d = Math.max(0.05, toSec(n.t + n.d) - toSec(n.t));
-    const out = bus(n.i);
-    const sample = samples.get(n.i);
-    if (sample) {
-      const src = ctx.createBufferSource();
-      src.buffer = sample;
-      // Tiny pitch variance keeps repeated hits from sounding machine-gunned.
-      src.playbackRate.value = 1 + rnd() * 0.04;
-      const g = ctx.createGain();
-      g.gain.value = n.v;
-      src.connect(g).connect(out);
-      src.start(t);
-      continue;
+    return { n, t, d: Math.max(0.05, toSec(n.t + n.d) - toSec(n.t)), rate: 1 + rnd() * 0.04 };
+  });
+  const samples = new Map<Inst, AudioBuffer>();
+  for (const i of DRUMS) samples.set(i, await drumSample(i, sampleRate));
+  const ir = I.makeImpulse(new OfflineAudioContext(2, 1, sampleRate), 2.6, 2.4);
+
+  // Render in short segments: an offline context processes every scheduled node for its
+  // whole length, so one long context with thousands of notes is very slow. Each segment
+  // holds only the notes that start in it (plus room for their tails), and the segments
+  // are overlap-added.
+  const SEG = 4;
+  const nseg = Math.max(1, Math.ceil(music / SEG));
+  const total = Math.ceil((music + tail + 4) * sampleRate);
+  const mix = [new Float32Array(total), new Float32Array(total)];
+  const renderSegment = async (k: number) => {
+    const s0 = k * SEG;
+    const notes = timed.filter((x) => x.t >= s0 && (x.t < s0 + SEG || k == nseg - 1));
+    if (!notes.length) return;
+    const longest = Math.max(...notes.map((x) => x.t - s0 + x.d));
+    const len = Math.ceil((longest + tail) * sampleRate);
+    const ctx = new OfflineAudioContext(2, len, sampleRate);
+    const dry = ctx.createGain();
+    dry.connect(ctx.destination);
+    const verb = ctx.createConvolver();
+    verb.buffer = ir;
+    const send = ctx.createGain();
+    send.gain.value = cue.reverb;
+    send.connect(verb).connect(ctx.destination);
+    const buses = new Map<Inst, GainNode>();
+    const bus = (i: Inst) => {
+      let g = buses.get(i);
+      if (!g) {
+        g = ctx.createGain();
+        g.gain.value = LEVELS[i];
+        g.connect(dry);
+        // Drums and bass stay drier than the melodic instruments.
+        const wet = ctx.createGain();
+        wet.gain.value = i == 'bass' || i == 'kick' ? 0.2 : i == 'ride' || i == 'hat' ? 0.5 : 1;
+        g.connect(wet).connect(send);
+        buses.set(i, g);
+      }
+      return g;
+    };
+    for (const { n, t: at, d, rate } of notes) {
+      const t = at - s0;
+      const out = bus(n.i);
+      const sample = samples.get(n.i);
+      if (sample) {
+        const src = ctx.createBufferSource();
+        src.buffer = sample;
+        // Tiny pitch variance keeps repeated hits from sounding machine-gunned.
+        src.playbackRate.value = rate;
+        const g = ctx.createGain();
+        g.gain.value = n.v;
+        src.connect(g).connect(out);
+        src.start(t);
+        continue;
+      }
+      switch (n.i) {
+        case 'rhodes':
+          I.rhodes(ctx, out, t, d, n.m, n.v, n.pan);
+          break;
+        case 'vibes':
+          I.vibes(ctx, out, t, d, n.m, n.v, n.pan);
+          break;
+        case 'bass':
+          I.bass(ctx, out, t, d, n.m, n.v);
+          break;
+        case 'trumpet':
+          I.trumpet(ctx, out, t, d, n.m, n.v, n.pan);
+          break;
+        case 'strings':
+          I.strings(ctx, out, t, d, n.m, n.v, n.pan);
+          break;
+        case 'piano':
+          I.piano(ctx, out, t, d, n.m, n.v, n.pan);
+          break;
+        case 'swell':
+          I.swell(ctx, out, t, d, n.v);
+          break;
+      }
     }
-    switch (n.i) {
-      case 'rhodes':
-        I.rhodes(ctx, out, t, d, n.m, n.v, n.pan);
-        break;
-      case 'vibes':
-        I.vibes(ctx, out, t, d, n.m, n.v, n.pan);
-        break;
-      case 'bass':
-        I.bass(ctx, out, t, d, n.m, n.v);
-        break;
-      case 'trumpet':
-        I.trumpet(ctx, out, t, d, n.m, n.v, n.pan);
-        break;
-      case 'strings':
-        I.strings(ctx, out, t, d, n.m, n.v, n.pan);
-        break;
-      case 'piano':
-        I.piano(ctx, out, t, d, n.m, n.v, n.pan);
-        break;
-      case 'ride':
-        I.ride(ctx, out, t, n.v);
-        break;
-      case 'hat':
-        I.hat(ctx, out, t, n.v);
-        break;
-      case 'brush':
-        I.brush(ctx, out, t, n.v);
-        break;
-      case 'swish':
-        I.brush(ctx, out, t, n.v, true);
-        break;
-      case 'snare':
-        I.snare(ctx, out, t, n.v);
-        break;
-      case 'kick':
-        I.kick(ctx, out, t, n.v);
-        break;
-      case 'swell':
-        I.swell(ctx, out, t, d, n.v);
-        break;
+    const buf = await ctx.startRendering();
+    const off = Math.round(s0 * sampleRate);
+    for (let ch = 0; ch < 2; ch++) {
+      const src = buf.getChannelData(ch);
+      const dst = mix[ch];
+      const n = Math.min(src.length, dst.length - off);
+      for (let i = 0; i < n; i++) dst[off + i] += src[i];
     }
-  }
-  const buf = await ctx.startRendering();
+  };
+  // A few at a time keeps memory flat while using spare cores.
+  let next = 0;
+  const worker = async () => {
+    while (next < nseg) await renderSegment(next++);
+  };
+  await Promise.all([worker(), worker(), worker()]);
+
+  // Mastering pass: gentle bus compression and a softened top end.
+  const master = new OfflineAudioContext(2, total, sampleRate);
+  const raw = master.createBuffer(2, total, sampleRate);
+  raw.copyToChannel(mix[0], 0);
+  raw.copyToChannel(mix[1], 1);
+  const src = master.createBufferSource();
+  src.buffer = raw;
+  const comp = master.createDynamicsCompressor();
+  comp.threshold.value = -16;
+  comp.ratio.value = 2.5;
+  comp.attack.value = 0.01;
+  comp.release.value = 0.2;
+  const warmth = master.createBiquadFilter();
+  warmth.type = 'highshelf';
+  warmth.frequency.value = 9000;
+  warmth.gain.value = -3;
+  src.connect(comp).connect(warmth).connect(master.destination);
+  src.start();
+  const buf = await master.startRendering();
   normalize(buf, 0.16, 0.85);
   if (!cue.loopBeats) return buf;
   const loopLen = Math.round(cue.loopBeats * spb * sampleRate);
   const out = new AudioBuffer({ length: loopLen, numberOfChannels: 2, sampleRate });
   for (let ch = 0; ch < 2; ch++) {
-    const src = buf.getChannelData(ch);
+    const s = buf.getChannelData(ch);
     const dst = out.getChannelData(ch);
-    dst.set(src.subarray(0, loopLen));
-    for (let i = loopLen; i < src.length; i++) dst[i - loopLen] += src[i];
+    dst.set(s.subarray(0, loopLen));
+    for (let i = loopLen; i < s.length; i++) dst[(i - loopLen) % loopLen] += s[i];
   }
   return out;
 }
@@ -194,7 +220,12 @@ interface Playing {
   id: CueId;
   src: AudioBufferSourceNode;
   gain: GainNode;
+  /** Context time the cue started, for beat-synced changes. */
+  at: number;
 }
+
+/** Tempo of the looping cues, so changes between them land on a beat. */
+const BPM: Partial<Record<CueId, number>> = { main: 168, bonus: 232 };
 
 const hz = (div: number) => PIT_HZ / div;
 const ftom = (f: number) => 69 + 12 * Math.log2(f / 440);
@@ -253,9 +284,18 @@ class Jazz implements AudioBackend {
 
   private start(id: CueId): void {
     const buf = this.buffers.get(id);
-    this.stopMusic(0.12);
+    // Switching between the two looping cues waits for the next beat of the old one
+    // (at most a third of a second), so the band changes tune in time.
+    let t = this.ctx.currentTime;
+    const p = this.playing;
+    const bpm = p ? BPM[p.id] : undefined;
+    if (p && bpm && BPM[id] && buf) {
+      const beat = 60 / bpm;
+      const since = t - p.at;
+      t = p.at + Math.ceil(since / beat + 0.05) * beat;
+    }
+    this.stopMusic(0.12, t);
     if (!buf) return; // starts once rendered (see load)
-    const t = this.ctx.currentTime;
     const src = this.ctx.createBufferSource();
     src.buffer = buf;
     src.loop = id == 'main' || id == 'bonus';
@@ -264,16 +304,16 @@ class Jazz implements AudioBackend {
     gain.gain.linearRampToValueAtTime(1, t + 0.04);
     src.connect(gain).connect(this.music);
     src.start(t + 0.01);
-    this.playing = { id, src, gain };
+    this.playing = { id, src, gain, at: t + 0.01 };
     src.onended = () => {
       if (this.playing?.src === src) this.playing = null;
     };
   }
 
-  private stopMusic(fade: number): void {
+  private stopMusic(fade: number, at = this.ctx.currentTime): void {
     const p = this.playing;
     if (!p) return;
-    const t = this.ctx.currentTime;
+    const t = Math.max(at, this.ctx.currentTime);
     p.gain.gain.cancelScheduledValues(t);
     p.gain.gain.setValueAtTime(p.gain.gain.value, t);
     p.gain.gain.linearRampToValueAtTime(0, t + fade);

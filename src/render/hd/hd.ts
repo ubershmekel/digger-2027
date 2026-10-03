@@ -141,6 +141,7 @@ export class HdRenderer implements Renderer {
   private lastPos = new THREE.Vector3();
   private lastScene = '';
   private reducedMotion = false;
+  private highContrast = false;
   private quality: Settings['quality'] = 'high';
   private v = new THREE.Vector3();
   private m4 = new THREE.Matrix4();
@@ -279,6 +280,11 @@ export class HdRenderer implements Renderer {
 
   configure(s: Settings): void {
     this.reducedMotion = s.reducedMotion;
+    // High contrast: darker earth, brighter actors and gems, violet monsters.
+    this.highContrast = s.highContrast;
+    this.terrain.setContrast(s.highContrast);
+    (this.emeralds.material as THREE.MeshPhysicalMaterial).emissiveIntensity = s.highContrast ? 1.1 : 0.6;
+    this.key.intensity = s.highContrast ? 2.9 : 2.4;
     this.quality = s.quality;
     const q = s.quality;
     this.renderer.shadowMap.enabled = q != 'low';
@@ -351,6 +357,7 @@ export class HdRenderer implements Renderer {
 
     if (!f.paused) for (const e of f.events) this.onEvent(e, g);
 
+    this.updateCast(f);
     this.updateDigger(f, dt);
     this.updateMonsters(f, dt);
     this.updateBags(f, dt);
@@ -490,7 +497,7 @@ export class HdRenderer implements Renderer {
   private updateDigger(f: FrameInfo, dt: number): void {
     const g = f.game;
     const d = this.digger;
-    const on = g.sprite.sprenf[0];
+    const on = g.sprite.sprenf[0] && this.castOn(g, 0);
     const ch = g.sprite.sprch[0];
     const [sx, sy] = this.spritePos(f, 0);
     const x = spriteCx(sx);
@@ -518,7 +525,7 @@ export class HdRenderer implements Renderer {
     }
     if (!f.paused) this.diggerAge += dt;
     const ds = entrance(this.diggerAge, 0.5);
-    d.root.scale.setScalar(ds);
+    d.root.scale.setScalar(ds * this.castExit);
     d.root.rotation.y = (1 - Math.min(1, this.diggerAge / 0.5)) * Math.PI * 2;
     const moved = Math.hypot(x - d.root.position.x, y - d.root.position.y);
     d.root.position.set(x, y, ACTOR_Z);
@@ -611,7 +618,7 @@ export class HdRenderer implements Renderer {
     for (let i = 0; i < 6; i++) {
       const st = this.monsters[i];
       const slot = 8 + i;
-      const on = g.sprite.sprenf[slot];
+      const on = g.sprite.sprenf[slot] && this.castOn(g, slot);
       const ch = g.sprite.sprch[slot];
       const { nob, hob } = st;
       if (!on || ch < 69 || ch > 80) {
@@ -631,7 +638,7 @@ export class HdRenderer implements Renderer {
         st.age = 0;
       }
       if (!f.paused) st.age += dt;
-      const pop = entrance(st.age, 0.5);
+      const pop = entrance(st.age, 0.5) * this.castExit;
       st.wasOn = true;
       const vx = (x - st.lastX) / Math.max(dt, 1e-3);
       st.lastX = x;
@@ -645,9 +652,9 @@ export class HdRenderer implements Renderer {
       const faceDir = ch >= 77 ? -1 : ch >= 73 ? 1 : 0;
       if (faceDir) st.face = faceDir;
       else if (Math.abs(vx) > 0.05) st.face = Math.sign(vx);
-      if (!f.paused) st.phase += dt * (moving ? 13 : 3);
+      if (!f.paused) st.phase += dt * (moving ? 13 : 5);
       const sq = st.squash;
-      const bounce = Math.sin(st.phase * 2) * 0.05 * (moving ? 1 : 0.4);
+      const bounce = Math.sin(st.phase * 2) * 0.05 * (moving ? 1 : 0.8);
       // Morph: one form shrinks away as the other pops in.
       const nobScale = Math.max(0, 1 - st.morph * 2);
       const hobScale = Math.max(0, st.morph * 2 - 1);
@@ -679,7 +686,7 @@ export class HdRenderer implements Renderer {
         const lid = Math.max(sq, st.blink < 0 ? 1 : 0, scared ? 0.5 : 0);
         for (const l of nob.lids) l.rotation.x = -1.6 + lid * 1.45;
         for (let k = 0; k < 2; k++) nob.eyes[k].position.y = 0.36 + Math.sin(st.phase * 2 + k) * 0.02;
-        tint(nob.bodyMat, 0x2fae36);
+        tint(nob.bodyMat, this.highContrast ? 0x9a4dff : 0x2fae36);
       }
 
       // --- Hobbin: side-on, chomping red jaws, facing its travel direction ---
@@ -694,7 +701,7 @@ export class HdRenderer implements Renderer {
         hob.lowerJaw.rotation.z = -chomp * 0.6;
         hob.body.scale.set(1 + bounce, 1 - bounce, 1);
         for (let k = 0; k < 2; k++) hob.legs[k].rotation.z = Math.sin(st.phase + k * Math.PI) * 0.6 * (moving ? 1 : 0.1);
-        tint(hob.bodyMat, 0x249a3a);
+        tint(hob.bodyMat, this.highContrast ? 0x7a3adf : 0x249a3a);
         if (moving && this.terrain.changed && !dying && !f.paused)
           this.dust.emit({ x: x + st.face * 0.7, y, z: ACTOR_Z + 0.5, count: 2, color: this.theme?.light ?? 0x9a6a3a, color2: this.theme?.dark ?? 0x4a2a10, speed: 2, life: 0.5, size: 0.3, gravity: 9, drag: 1 });
       }
@@ -706,7 +713,7 @@ export class HdRenderer implements Renderer {
     for (let i = 0; i < 7; i++) {
       const st = this.bags[i];
       const slot = 1 + i;
-      const on = g.sprite.sprenf[slot];
+      const on = g.sprite.sprenf[slot] && this.castOn(g, slot);
       const ch = g.sprite.sprch[slot];
       if (!on || ch < 62 || ch > 68) {
         st.bag.root.visible = st.gold.root.visible = false;
@@ -741,7 +748,7 @@ export class HdRenderer implements Renderer {
         if (!f.paused) st.age += dt;
         const drop = 1 - Math.min(1, st.age / 0.4);
         st.bag.root.position.set(x, y + drop * drop * 2.5, BAG_Z);
-        st.bag.root.scale.setScalar(entrance(st.age, 0.55));
+        st.bag.root.scale.setScalar(entrance(st.age, 0.55) * this.castExit);
         const tilt = ch == 63 ? -0.2 : ch == 64 ? 0.2 : 0;
         st.tilt = damp(st.tilt, tilt, 30, dt);
         st.bag.pivot.rotation.z = st.tilt;
@@ -769,7 +776,7 @@ export class HdRenderer implements Renderer {
     const g = f.game;
     const show = new Uint8Array(151);
     if (g.scene == 'attract') {
-      if (g.attractFrame >= 198) show[150] = 1;
+      if (g.attractFrame >= 198 && this.castExit > 0.01) show[150] = 1;
     } else if (g.scene != 'initials') {
       const mask = g.digger.emmask;
       for (let i = 0; i < 150; i++) if (g.digger.emfield[i] & mask) show[i] = 1;
@@ -792,7 +799,7 @@ export class HdRenderer implements Renderer {
       const ph = this.emPhase[i];
       this.q.setFromEuler(new THREE.Euler(0.1 * Math.sin(t * 0.7 + ph), Math.sin(t * 0.9 + ph) * 0.6, 0));
       this.v.set(x, y + Math.sin(t * 1.3 + ph) * 0.03, EMERALD_Z);
-      this.m4.compose(this.v, this.q, new THREE.Vector3(1, 1, 1).multiplyScalar(entrance(this.emAge[i], 0.4)));
+      this.m4.compose(this.v, this.q, new THREE.Vector3(1, 1, 1).multiplyScalar(entrance(this.emAge[i], 0.4) * (i == 150 ? this.castExit : 1)));
       this.emeralds.setMatrixAt(k++, this.m4);
       if (!f.paused && Math.random() < dt * 0.25) this.twinkle(x + (Math.random() - 0.5) * 0.6, y + 0.15, EMERALD_Z + 0.35);
     }
@@ -816,7 +823,7 @@ export class HdRenderer implements Renderer {
     const g = f.game;
     const sp = g.sprite;
     // Bonus cherry
-    if (sp.sprenf[14] && sp.sprch[14] == 81) {
+    if (sp.sprenf[14] && sp.sprch[14] == 81 && this.castOn(g, 14)) {
       const [sx, sy] = this.spritePos(f, 14);
       this.cherry.visible = true;
       if (!this.cherryWasOn) {
@@ -825,7 +832,7 @@ export class HdRenderer implements Renderer {
       }
       this.cherryWasOn = true;
       if (!f.paused) this.cherryAge += dt;
-      this.cherry.scale.setScalar(entrance(this.cherryAge, 0.6));
+      this.cherry.scale.setScalar(entrance(this.cherryAge, 0.6) * this.castExit);
       this.cherry.position.set(spriteCx(sx), spriteCy(sy) + Math.sin(f.time * 2.5) * 0.08, ACTOR_Z + 0.1);
       this.cherry.rotation.y = Math.sin(f.time * 1.4) * 0.5;
       this.cherryLight.position.set(this.cherry.position.x, this.cherry.position.y, 0.6);
@@ -859,6 +866,42 @@ export class HdRenderer implements Renderer {
     }
   }
 
+  /**
+   * Title screen: the original loops its cast introduction every 250 frames, leaving
+   * the old sprites in place in between. In 3D each character appears only from its
+   * cue, pops in, and everyone bows out together before the loop restarts.
+   */
+  private castExit = 1;
+  private castExitAt = -1;
+
+  private static readonly CAST_ENTRY: Record<number, number> = { 8: 50, 9: 90, 0: 130, 1: 178, 14: 218 };
+
+  private castOn(g: Game, slot: number): boolean {
+    if (g.scene != 'attract') return true;
+    const at = HdRenderer.CAST_ENTRY[slot];
+    return at == undefined || (g.attractFrame >= at && this.castExit > 0.01);
+  }
+
+  private updateCast(f: FrameInfo): void {
+    const g = f.game;
+    if (g.scene != 'attract' || g.attractFrame < 236) {
+      this.castExit = 1;
+      this.castExitAt = -1;
+      return;
+    }
+    if (this.castExitAt < 0) {
+      this.castExitAt = f.time;
+      // A puff where each character stood.
+      for (const slot of [8, 9, 0, 1, 14]) {
+        if (!g.sprite.sprenf[slot]) continue;
+        this.dust.emit({ x: spriteCx(g.sprite.sprx[slot]), y: spriteCy(g.sprite.spry[slot]), z: ACTOR_Z + 0.3, count: 16, color: 0xe8d8c0, color2: 0x8a7060, speed: 2.5, life: 0.7, size: 0.7, drag: 3 });
+      }
+    }
+    const t = (f.time - this.castExitAt) / 0.4;
+    // Anticipate (a small swell), then shrink away.
+    this.castExit = t < 0.25 ? 1 + t * 0.4 : Math.max(0, 1.1 * (1 - (t - 0.25) / 0.75));
+  }
+
   private updateLabels(f: FrameInfo): void {
     const g = f.game;
     if (g.scene != 'attract') {
@@ -878,7 +921,7 @@ export class HdRenderer implements Renderer {
       this.labels.innerHTML = cast.map(([n]) => `<div class="cast-label">${n}</div>`).join('');
     cast.forEach(([, at, x, y], i) => {
       const el = this.labels.children[i] as HTMLElement;
-      const visible = fr >= at;
+      const visible = fr >= at && this.castExit > 0.5;
       el.classList.toggle('show', visible);
       this.v.set(wx(x + 10), wy(y + 6), 0.2).project(this.camera);
       el.style.transform = `translate(${(this.v.x * 0.5 + 0.5) * this.size.w}px, ${(-this.v.y * 0.5 + 0.5) * this.size.h}px) translateY(-50%)`;
@@ -907,6 +950,12 @@ export class HdRenderer implements Renderer {
     tx += (zx - tx) * this.zoom * 0.25;
     ty += (zy - ty) * this.zoom * 0.25;
     const d = dist * (1 - this.zoom * 0.18);
+    // Fog stays behind the playfield however far back the camera sits (tall screens).
+    const fog = this.scene.fog as THREE.Fog;
+    fog.near = dist + 25;
+    fog.far = dist + 110;
+    this.camera.far = dist + 200;
+    this.camera.updateProjectionMatrix();
     let ox = 0;
     let oy = 0;
     if (!this.reducedMotion) {

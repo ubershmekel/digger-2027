@@ -256,6 +256,12 @@ export class Terrain {
     this.geom.attributes.color.needsUpdate = true;
   }
 
+  /** Darkens the earth so actors stand out (accessibility). */
+  setContrast(high: boolean): void {
+    this.material.color.setScalar(high ? 0.5 : 1);
+    this.frameMaterial.color.setScalar(high ? 0.5 : 1);
+  }
+
   /** Depth of the carved surface at a sim position (0 = solid face). */
   depthAt(sx: number, sy: number): number {
     const i = Math.round(sx / STEP);

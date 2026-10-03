@@ -1,8 +1,9 @@
 // Keyboard, gamepad and touch input. Game keys go to the sim's Input latch;
 // everything else becomes a UI action.
 import type { Key } from '../sim/input';
+import { DEFAULT_KEYS, type BindAction } from '../storage/storage';
 
-export type UiAction = 'pause' | 'skip' | 'toggleGraphics' | 'toggleSound' | 'mute' | 'confirm' | 'back';
+export type UiAction = 'pause' | 'skip' | 'skipNow' | 'toggleGraphics' | 'toggleSound' | 'mute' | 'fullscreen' | 'confirm' | 'back';
 
 export interface ControlsTarget {
   press(k: Key): void;
@@ -12,59 +13,67 @@ export interface ControlsTarget {
   readonly menuOpen: boolean;
 }
 
-const KEYMAP: Record<string, Key> = {
-  ArrowLeft: 'left',
-  ArrowRight: 'right',
-  ArrowUp: 'up',
-  ArrowDown: 'down',
-  KeyA: 'left',
-  KeyD: 'right',
-  KeyW: 'up',
-  KeyS: 'down',
-  Numpad4: 'left',
-  Numpad6: 'right',
-  Numpad8: 'up',
-  Numpad2: 'down',
-  Space: 'fire',
-  F1: 'fire',
-  ControlLeft: 'fire',
-  ControlRight: 'fire',
-  KeyJ: 'fire',
-  KeyZ: 'fire',
-};
-
 export class Controls {
   private held = new Set<Key>();
   private padPrev: boolean[] = [];
   private padDirs = new Set<Key>();
+  private map = new Map<string, BindAction>();
+  /** While set, the next key press is handed here instead (key rebinding). */
+  private capture: ((code: string) => void) | null = null;
 
   constructor(private readonly t: ControlsTarget) {
+    this.setKeys(DEFAULT_KEYS);
     addEventListener('keydown', (e) => this.keydown(e), { capture: true });
     addEventListener('keyup', (e) => this.keyup(e), { capture: true });
     addEventListener('blur', () => this.releaseAll());
   }
 
+  setKeys(keys: Record<BindAction, string[]>): void {
+    this.releaseAll();
+    this.map.clear();
+    for (const [action, codes] of Object.entries(keys) as [BindAction, string[]][]) for (const c of codes) this.map.set(c, action);
+  }
+
+  /** Hands the next key press to `cb` (Escape cancels with an empty code). */
+  captureKey(cb: (code: string) => void): void {
+    this.capture = cb;
+  }
+
   private keydown(e: KeyboardEvent): void {
+    if (this.capture) {
+      e.preventDefault();
+      e.stopPropagation();
+      const cb = this.capture;
+      this.capture = null;
+      cb(e.code == 'Escape' ? '' : e.code);
+      return;
+    }
     // Typing into a text field (initials) is never a game or shortcut key.
     if (e.target instanceof HTMLInputElement && e.target.type != 'range') return;
-    const k = KEYMAP[e.code];
-    if (e.code == 'F2' || e.code == 'F3') {
+    const bound = this.map.get(e.code);
+    if (e.code == 'F2' || e.code == 'F4') {
       e.preventDefault();
       if (!e.repeat) this.t.action(e.code == 'F2' ? 'toggleGraphics' : 'toggleSound');
       return;
     }
-    if (e.code == 'Escape' || e.code == 'KeyP' || e.code == 'Pause') {
+    if (e.code == 'Escape' || bound == 'pause') {
       if (!e.repeat) this.t.action(e.code == 'Escape' && this.t.menuOpen ? 'back' : 'pause');
       e.preventDefault();
       return;
     }
     if (this.t.menuOpen) return; // menus handle their own keys
-    if (e.code == 'KeyM') {
+    if (e.code == 'KeyM' && !bound) {
       if (!e.repeat) this.t.action('mute');
       return;
     }
+    if (e.code == 'KeyF' && !bound) {
+      if (!e.repeat) this.t.action('fullscreen');
+      return;
+    }
+    const k = bound as Key | undefined;
     // Only Fire (or Enter) counts toward skipping a cut-scene, so steering never skips by accident.
-    if (!e.repeat && (k == 'fire' || e.code == 'Enter')) this.t.action('skip');
+    if (!e.repeat && k == 'fire') this.t.action('skip');
+    if (!e.repeat && e.code == 'Enter') this.t.action('skipNow');
     if (k) {
       e.preventDefault();
       if (!this.held.has(k)) {
@@ -75,8 +84,8 @@ export class Controls {
   }
 
   private keyup(e: KeyboardEvent): void {
-    const k = KEYMAP[e.code];
-    if (k && this.held.has(k)) {
+    const k = this.map.get(e.code) as Key | undefined;
+    if (k && k != ('pause' as Key) && this.held.has(k)) {
       this.held.delete(k);
       this.t.release(k);
       e.preventDefault();
@@ -127,56 +136,102 @@ export class Controls {
     this.padPrev = pressedNow;
   }
 
-  /** Builds the on-screen controls for touch devices. */
+  /**
+   * Builds the on-screen controls for touch devices: a floating joystick on the left
+   * (touch anywhere, then drag; the first touch only sets the centre) and a large
+   * fire zone on the right.
+   */
   mountTouch(root: HTMLElement): HTMLElement {
     const el = document.createElement('div');
     el.className = 'touch';
     el.innerHTML = `
-      <div class="dpad">
-        <button data-k="up" aria-label="Up">▲</button>
-        <button data-k="left" aria-label="Left">◀</button>
-        <button data-k="right" aria-label="Right">▶</button>
-        <button data-k="down" aria-label="Down">▼</button>
+      <div class="stick-zone" aria-label="Movement: touch and drag">
+        <div class="stick-base"><div class="stick-knob"></div></div>
+        <div class="stick-hint">drag to move</div>
       </div>
-      <button class="fire" data-k="fire" aria-label="Fire">FIRE</button>
-      <button class="tpause" aria-label="Pause">❚❚</button>`;
+      <div class="fire-zone"><button class="fire" tabindex="-1" aria-label="Fire">FIRE</button></div>
+      <button class="tpause" aria-label="Pause">❚❚</button>
+      <div class="rotate-hint">Turn your phone sideways for a bigger view</div>`;
     root.appendChild(el);
-    const active = new Map<number, Key>();
-    const set = (id: number, k: Key | null) => {
-      const old = active.get(id);
-      if (old == k) return;
-      if (old) {
-        active.delete(id);
-        if (![...active.values()].includes(old)) this.t.release(old);
-      }
-      if (k) {
-        if (![...active.values()].includes(k)) {
-          if (k == 'fire') this.t.action('skip');
-          this.t.press(k);
-        }
-        active.set(id, k);
-      }
+    const zone = el.querySelector<HTMLElement>('.stick-zone')!;
+    const base = el.querySelector<HTMLElement>('.stick-base')!;
+    const knob = el.querySelector<HTMLElement>('.stick-knob')!;
+    const fireZone = el.querySelector<HTMLElement>('.fire-zone')!;
+    const fireBtn = el.querySelector<HTMLElement>('.fire')!;
+    const RADIUS = 46;
+    const DEAD = 14;
+    let stickId = -1;
+    let cx = 0;
+    let cy = 0;
+    let dir: Key | null = null;
+    const setDir = (d: Key | null) => {
+      if (d == dir) return;
+      if (dir) this.t.release(dir);
+      dir = d;
+      if (d) this.t.press(d);
     };
-    const keyAt = (x: number, y: number): Key | null => {
-      const b = document.elementFromPoint(x, y) as HTMLElement | null;
-      const k = b?.closest<HTMLElement>('[data-k]')?.dataset.k;
-      return (k as Key) ?? null;
-    };
-    el.addEventListener('pointerdown', (e) => {
-      const tgt = e.target as HTMLElement;
-      if (tgt.closest('.tpause')) {
-        this.t.action('pause');
-        return;
-      }
+    zone.addEventListener('pointerdown', (e) => {
+      if (stickId >= 0) return;
       e.preventDefault();
-      set(e.pointerId, keyAt(e.clientX, e.clientY));
+      stickId = e.pointerId;
+      try {
+        zone.setPointerCapture(e.pointerId);
+      } catch {
+        /* not a real pointer (tests) */
+      }
+      const r = zone.getBoundingClientRect();
+      cx = e.clientX;
+      cy = e.clientY;
+      base.style.left = `${cx - r.left}px`;
+      base.style.top = `${cy - r.top}px`;
+      knob.style.transform = 'translate(-50%, -50%)';
+      el.classList.add('stick-on');
     });
-    el.addEventListener('pointermove', (e) => {
-      if (active.has(e.pointerId) && active.get(e.pointerId) != 'fire') set(e.pointerId, keyAt(e.clientX, e.clientY));
+    zone.addEventListener('pointermove', (e) => {
+      if (e.pointerId != stickId) return;
+      const dx = e.clientX - cx;
+      const dy = e.clientY - cy;
+      const dist = Math.hypot(dx, dy);
+      const k = dist > RADIUS ? RADIUS / dist : 1;
+      knob.style.transform = `translate(calc(-50% + ${dx * k}px), calc(-50% + ${dy * k}px))`;
+      if (dist < DEAD) setDir(null);
+      else if (Math.abs(dx) > Math.abs(dy)) setDir(dx > 0 ? 'right' : 'left');
+      else setDir(dy > 0 ? 'down' : 'up');
     });
-    const end = (e: PointerEvent) => set(e.pointerId, null);
-    el.addEventListener('pointerup', end);
-    el.addEventListener('pointercancel', end);
+    const endStick = (e: PointerEvent) => {
+      if (e.pointerId != stickId) return;
+      stickId = -1;
+      setDir(null);
+      knob.style.transform = 'translate(-50%, -50%)';
+      el.classList.remove('stick-on');
+    };
+    zone.addEventListener('pointerup', endStick);
+    zone.addEventListener('pointercancel', endStick);
+
+    const firing = new Set<number>();
+    fireZone.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      if (!firing.size) {
+        this.t.action('skip');
+        this.t.press('fire');
+      }
+      firing.add(e.pointerId);
+      fireBtn.classList.add('down');
+    });
+    const endFire = (e: PointerEvent) => {
+      if (!firing.delete(e.pointerId)) return;
+      if (!firing.size) {
+        this.t.release('fire');
+        fireBtn.classList.remove('down');
+      }
+    };
+    fireZone.addEventListener('pointerup', endFire);
+    fireZone.addEventListener('pointercancel', endFire);
+    fireZone.addEventListener('pointerleave', endFire);
+    el.querySelector('.tpause')!.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      this.t.action('pause');
+    });
     el.addEventListener('contextmenu', (e) => e.preventDefault());
     return el;
   }

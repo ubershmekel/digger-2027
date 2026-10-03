@@ -583,6 +583,21 @@ input[type='range']::-moz-range-thumb {
   border-left: 7px solid #e8c35a;
 }
 
+.fade {
+  position: absolute;
+  inset: 0;
+  background: #000;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.9s ease;
+  z-index: 1;
+}
+
+.fade.on {
+  opacity: 1;
+  transition-duration: 1.6s;
+}
+
 .skip-hint.armed {
   color: var(--gold);
   opacity: 1;
@@ -611,8 +626,10 @@ input[type='range']::-moz-range-thumb {
   position: absolute;
   bottom: max(18px, env(safe-area-inset-bottom));
   right: 22px;
-  font-size: 0.78rem;
-  letter-spacing: 0.18em;
+  font-size: clamp(0.95rem, 1.6vw, 1.25rem);
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  z-index: 2;
   text-transform: uppercase;
   color: var(--ink-dim);
   opacity: 0.8;
@@ -651,72 +668,120 @@ input[type='range']::-moz-range-thumb {
 
 .touch {
   position: fixed;
-  inset: auto 0 0 0;
-  height: 0;
+  inset: 0;
   z-index: 5;
+  pointer-events: none;
   touch-action: none;
+  transition: opacity 0.2s;
 }
 
-.touch[hidden] {
+.touch[hidden],
+.touch.away {
   display: none;
 }
 
-.touch button {
-  position: fixed;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  color: rgba(255, 255, 255, 0.75);
-  backdrop-filter: blur(4px);
+/* Left 55% of the screen (below the HUD): touch anywhere, then drag. */
+.stick-zone {
+  position: absolute;
+  left: 0;
+  top: 70px;
+  bottom: 0;
+  width: 55%;
+  pointer-events: auto;
   touch-action: none;
-  padding: 0;
-  font-size: 1.1rem;
 }
 
-.dpad button {
-  width: 64px;
-  height: 64px;
+.stick-base {
+  position: absolute;
+  left: 110px;
+  top: calc(100% - 120px);
+  width: 120px;
+  height: 120px;
+  margin: -60px 0 0 -60px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0.12) 70%, rgba(255, 255, 255, 0.04) 100%);
+  border: 2px solid rgba(255, 255, 255, 0.22);
+  opacity: 0.45;
+  transition: opacity 0.15s;
 }
 
-.dpad [data-k='up'] {
-  left: calc(16px + 64px);
-  bottom: calc(16px + 128px);
+.touch.stick-on .stick-base {
+  opacity: 1;
 }
 
-.dpad [data-k='left'] {
-  left: 16px;
-  bottom: calc(16px + 64px);
+.stick-knob {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  background: radial-gradient(circle at 35% 30%, rgba(255, 240, 210, 0.9), rgba(241, 185, 74, 0.6));
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
 }
 
-.dpad [data-k='right'] {
-  left: calc(16px + 128px);
-  bottom: calc(16px + 64px);
+.stick-hint {
+  position: absolute;
+  left: 110px;
+  bottom: 20px;
+  transform: translateX(-50%);
+  font-size: 0.7rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.45);
 }
 
-.dpad [data-k='down'] {
-  left: calc(16px + 64px);
-  bottom: 16px;
+.touch.stick-on .stick-hint {
+  display: none;
+}
+
+/* Right side: a big area that fires anywhere you tap. */
+.fire-zone {
+  position: absolute;
+  right: 0;
+  top: 70px;
+  bottom: 0;
+  width: 40%;
+  pointer-events: auto;
+  touch-action: none;
 }
 
 .touch .fire {
-  right: 24px;
-  bottom: 40px;
-  width: 96px;
-  height: 96px;
+  position: absolute;
+  right: 28px;
+  bottom: 36px;
+  width: 104px;
+  height: 104px;
+  border-radius: 50%;
+  padding: 0;
   font-weight: 800;
   letter-spacing: 0.1em;
   font-size: 0.85rem;
-  background: rgba(241, 185, 74, 0.2);
-  border-color: rgba(241, 185, 74, 0.5);
+  color: rgba(255, 255, 255, 0.85);
+  background: rgba(241, 185, 74, 0.22);
+  border: 2px solid rgba(241, 185, 74, 0.55);
+  pointer-events: none;
+}
+
+.touch .fire.down {
+  background: rgba(241, 185, 74, 0.5);
+  transform: scale(0.94);
 }
 
 .touch .tpause {
+  position: fixed;
   right: 16px;
   top: 16px;
-  bottom: auto;
   width: 44px;
   height: 44px;
+  border-radius: 50%;
+  padding: 0;
   font-size: 0.8rem;
+  pointer-events: auto;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.75);
 }
 
 @media (max-width: 640px) {
@@ -734,7 +799,22 @@ input[type='range']::-moz-range-thumb {
 @media (prefers-reduced-motion: reduce) {
   .panel,
   button.big,
-  .skip-hint.armed {
+  .fade {
+  position: absolute;
+  inset: 0;
+  background: #000;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.9s ease;
+  z-index: 1;
+}
+
+.fade.on {
+  opacity: 1;
+  transition-duration: 1.6s;
+}
+
+.skip-hint.armed {
   color: var(--gold);
   opacity: 1;
   animation: none;
@@ -983,4 +1063,121 @@ a.button:focus-visible {
 
 .hud-p2 {
   justify-self: end;
+}
+
+/* Sound captions */
+.caption {
+  position: absolute;
+  left: 50%;
+  bottom: max(56px, calc(env(safe-area-inset-bottom) + 44px));
+  transform: translateX(-50%);
+  padding: 5px 14px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.72);
+  color: #fff;
+  font-size: 0.95rem;
+  letter-spacing: 0.03em;
+  opacity: 0;
+  transition: opacity 0.2s;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.caption.show {
+  opacity: 1;
+}
+
+/* Starting level picker on the title menu */
+.lvl-pick {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 12px;
+  color: var(--ink-dim);
+  font-size: 0.9rem;
+}
+
+.lvl-pick button {
+  padding: 4px 12px;
+}
+
+.lvl-pick b {
+  min-width: 2ch;
+  text-align: center;
+  color: var(--gold);
+  font-size: 1.1rem;
+}
+
+.ui.hd-attract .panel.menu .lvl-pick {
+  grid-column: 1;
+}
+
+/* Key rebinding */
+.key-row {
+  display: grid;
+  grid-template-columns: 60px 1fr;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.9rem;
+}
+
+.key-row button {
+  padding: 6px 10px;
+  font-size: 0.85rem;
+  text-align: left;
+  font-family: ui-monospace, 'Cascadia Mono', Menlo, monospace;
+}
+
+.key-row button.listening {
+  border-color: var(--gold);
+  color: var(--gold);
+}
+
+.ui.hd-attract .menu-scores {
+  grid-column: 2;
+  grid-row: 2 / span 2;
+}
+
+.stage.loading canvas {
+  visibility: hidden;
+}
+
+.hotkeys {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 14px;
+  margin: 0;
+  font-size: 0.88rem;
+}
+
+.hotkeys dt {
+  font-family: ui-monospace, 'Cascadia Mono', Menlo, monospace;
+  color: var(--gold);
+  white-space: nowrap;
+}
+
+.hotkeys dd {
+  margin: 0;
+  color: var(--ink-dim);
+}
+
+.rotate-hint {
+  display: none;
+  position: absolute;
+  left: 50%;
+  top: 22%;
+  transform: translateX(-50%);
+  padding: 6px 14px;
+  border-radius: 99px;
+  background: rgba(0, 0, 0, 0.6);
+  color: var(--ink-dim);
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+@media (orientation: portrait) {
+  .rotate-hint {
+    display: block;
+  }
 }

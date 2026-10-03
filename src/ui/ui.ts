@@ -1,11 +1,16 @@
 // HTML overlay: title menu, settings, pause, high scores, initials entry, HUD, toasts.
-import type { Settings } from '../storage/storage';
+import { DEFAULT_KEYS, type BindAction, type Settings } from '../storage/storage';
 import type { HighScore } from '../storage/storage';
 
 export type Screen = 'boot' | 'menu' | 'settings' | 'pause' | 'scores' | 'help' | 'initials' | null;
 
 export interface UiCallbacks {
-  start(players: number): void;
+  start(players: number, level: number): void;
+  /** Highest level reached so far (for the starting-level picker). */
+  maxLevel(): number;
+  /** Hands the next key press to `cb` ('' when cancelled). */
+  captureKey(cb: (code: string) => void): void;
+  toggleFullscreen(): void;
   resume(): void;
   quit(): void;
   settingsChanged(s: Settings, key: keyof Settings): void;
@@ -21,6 +26,32 @@ const h = (html: string) => {
   return t.content.firstElementChild as HTMLElement;
 };
 
+/** Human-friendly name for a KeyboardEvent.code. */
+export function keyName(code: string): string {
+  const named: Record<string, string> = {
+    ArrowLeft: '←',
+    ArrowRight: '→',
+    ArrowUp: '↑',
+    ArrowDown: '↓',
+    Space: 'Space',
+    ControlLeft: 'Ctrl',
+    ControlRight: 'Right Ctrl',
+    ShiftLeft: 'Shift',
+    ShiftRight: 'Right Shift',
+    AltLeft: 'Alt',
+    AltRight: 'Right Alt',
+    Escape: 'Esc',
+    Enter: 'Enter',
+    Backspace: 'Backspace',
+    Tab: 'Tab',
+  };
+  if (named[code]) return named[code];
+  if (code.startsWith('Key')) return code.slice(3);
+  if (code.startsWith('Digit')) return code.slice(5);
+  if (code.startsWith('Numpad')) return 'Num ' + code.slice(6);
+  return code;
+}
+
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 
 export class Ui {
@@ -29,6 +60,9 @@ export class Ui {
   private hud: HTMLElement;
   private toastEl: HTMLElement;
   private skipEl: HTMLElement;
+  private captionEl: HTMLElement;
+  private captionTimer = 0;
+  private startLevel = 1;
   screen: Screen = null;
   private returnTo: Screen = null;
   private toastTimer = 0;
@@ -49,7 +83,8 @@ export class Ui {
     this.panel = h(`<div class="panel-wrap" hidden></div>`);
     this.toastEl = h(`<div class="toast" role="status" aria-live="polite"></div>`);
     this.skipEl = h(`<div class="skip-hint" hidden></div>`);
-    this.root.append(this.hud, this.skipEl, this.panel, this.toastEl);
+    this.captionEl = h(`<div class="caption" aria-live="polite"></div>`);
+    this.root.append(this.hud, this.skipEl, this.captionEl, this.panel, this.toastEl);
     host.appendChild(this.root);
     this.panel.addEventListener('keydown', (e) => this.navKeys(e));
   }
@@ -65,9 +100,17 @@ export class Ui {
     this.toastTimer = window.setTimeout(() => this.toastEl.classList.remove('show'), 1600);
   }
 
+  /** A short subtitle-style caption for a sound cue. */
+  caption(text: string): void {
+    this.captionEl.textContent = text;
+    this.captionEl.classList.add('show');
+    clearTimeout(this.captionTimer);
+    this.captionTimer = window.setTimeout(() => this.captionEl.classList.remove('show'), 1800);
+  }
+
   showSkipHint(on: boolean, armed = false): void {
     this.skipEl.hidden = !on;
-    const text = armed ? 'Press Fire again to skip' : 'Press Fire twice to skip';
+    const text = armed ? 'Press Fire again to skip' : 'Fire twice or Enter to skip';
     if (this.skipEl.textContent != text) this.skipEl.textContent = text;
     this.skipEl.classList.toggle('armed', armed);
   }
@@ -163,13 +206,19 @@ export class Ui {
             <button data-a="help">How to Play</button>
             <a class="button" href="https://github.com/ubershmekel/digger-2027" target="_blank" rel="noopener">Source on GitHub</a>
           </nav>
+          ${this.levelPicker()}
           ${this.menuScores()}
-          <p class="fine">F2 graphics · F3 sound · M mute · Esc pause</p>
+          <p class="fine">F2 graphics · F4 sound · M mute · Esc pause</p>
         </div>`);
         el.addEventListener('click', (e) => {
           const a = (e.target as HTMLElement).closest<HTMLElement>('[data-a]')?.dataset.a;
-          if (a == '1' || a == '2') this.cb.start(+a);
+          if (a == '1' || a == '2') this.cb.start(+a, this.startLevel);
           else if (a == 'scores' || a == 'settings' || a == 'help') this.show(a);
+          else if (a == 'lvl-' || a == 'lvl+') {
+            const max = this.cb.maxLevel();
+            this.startLevel = Math.max(1, Math.min(max, this.startLevel + (a == 'lvl+' ? 1 : -1)));
+            el.querySelector('.lvl-num')!.textContent = String(this.startLevel);
+          }
         });
         return el;
       }
@@ -219,7 +268,7 @@ export class Ui {
             <p>When the <b class="cherry">cherry</b> appears, grab it: for a short time you can eat the monsters. 200, 400, 800…</p>
             <p>Eight emeralds in a row: +250. Extra life every 20,000 points.</p>
           </div>
-          <p class="fine">Esc pause · F2 classic graphics · F3 classic sound · M mute · press Fire twice to skip a cut-scene · gamepads supported</p>
+          <p class="fine">Esc pause · F2 classic graphics · F4 classic sound · M mute · Fire twice or Enter skips a cut-scene · gamepads supported</p>
           <nav class="buttons row"><button data-a="back" autofocus>Back</button></nav>
         </div>`);
         el.querySelector('[data-a=back]')!.addEventListener('click', () => this.back());
@@ -232,6 +281,17 @@ export class Ui {
     }
   }
 
+  /** Starting-level selector, offered once the player has reached level 2 or beyond. */
+  private levelPicker(): string {
+    const max = this.cb.maxLevel();
+    if (max < 2) return '';
+    this.startLevel = Math.min(this.startLevel, max);
+    return `<div class="lvl-pick"><span>Start at level</span>
+      <button data-a="lvl-" aria-label="Lower starting level">−</button>
+      <b class="lvl-num">${this.startLevel}</b>
+      <button data-a="lvl+" aria-label="Higher starting level">+</button></div>`;
+  }
+
   /** Compact top-ten shown beside the title menu (the 3D title has no CGA score table). */
   private menuScores(): string {
     const list = this.scores();
@@ -240,6 +300,24 @@ export class Ui {
       return `<li><span class="ini">${esc(e?.initials ?? '...')}</span><span class="pts">${e ? e.score.toLocaleString() : '0'}</span></li>`;
     }).join('');
     return `<section class="menu-scores"><h3>High Scores</h3><ol>${rows}</ol></section>`;
+  }
+
+  private keyRows(): string {
+    const labels: [BindAction, string][] = [
+      ['left', 'Left'],
+      ['right', 'Right'],
+      ['up', 'Up'],
+      ['down', 'Down'],
+      ['fire', 'Fire'],
+      ['pause', 'Pause'],
+    ];
+    return labels
+      .map(([k, label]) => {
+        const codes = this.settings.keys[k];
+        const shown = codes.slice(0, 2).map(keyName).join(' · ') || 'unbound';
+        return `<div class="key-row"><span>${label}</span><button data-bind="${k}" title="Click, then press a new key">${esc(shown)}</button></div>`;
+      })
+      .join('');
   }
 
   private buildSettings(): HTMLElement {
@@ -263,7 +341,7 @@ export class Ui {
           ${slider('masterVolume', 'Master')}
           ${slider('musicVolume', 'Music')}
           ${slider('sfxVolume', 'Effects')}
-          <div class="row-label">Sound style <kbd>F3</kbd></div>
+          <div class="row-label">Sound style <kbd>F4</kbd></div>
           ${seg('audio', [
             ['hd', 'Jazz'],
             ['classic', 'PC speaker'],
@@ -283,6 +361,7 @@ export class Ui {
           ])}
           <div class="row-label">Quality</div>
           ${seg('quality', [
+            ['auto', 'Auto'],
             ['low', 'Low'],
             ['medium', 'Medium'],
             ['high', 'High'],
@@ -292,11 +371,45 @@ export class Ui {
             [false, 'Off'],
             [true, 'On'],
           ])}
+          <div class="row-label">Display <kbd>F</kbd></div>
+          <button data-a="fullscreen">Toggle fullscreen</button>
+        </section>
+        <section>
+          <h3>Accessibility</h3>
           <div class="row-label">Reduced motion</div>
           ${seg('reducedMotion', [
             [false, 'Off'],
             [true, 'On'],
           ])}
+          <div class="row-label">High contrast</div>
+          ${seg('highContrast', [
+            [false, 'Off'],
+            [true, 'On'],
+          ])}
+          <p class="hint">Darker earth and brighter actors; monsters turn violet so they never blend with emeralds.</p>
+          <div class="row-label">Sound captions</div>
+          ${seg('captions', [
+            [false, 'Off'],
+            [true, 'On'],
+          ])}
+        </section>
+        <section class="keys-section">
+          <h3>Controls</h3>
+          ${this.keyRows()}
+          <button data-a="keys-reset">Reset to defaults</button>
+        </section>
+        <section>
+          <h3>All hotkeys</h3>
+          <dl class="hotkeys">
+            <dt>Esc / P</dt><dd>Pause and menu</dd>
+            <dt>F2</dt><dd>Remastered ⇄ classic graphics</dd>
+            <dt>F4</dt><dd>Jazz ⇄ PC-speaker sound</dd>
+            <dt>M</dt><dd>Mute</dd>
+            <dt>F</dt><dd>Fullscreen</dd>
+            <dt>Enter</dt><dd>Skip a cut-scene</dd>
+            <dt>Fire ×2</dt><dd>Skip a cut-scene</dd>
+            <dt>Gamepad</dt><dd>D-pad or stick to move, A to fire, Start to pause</dd>
+          </dl>
         </section>
         <section>
           <h3>Gameplay</h3>
@@ -342,6 +455,28 @@ export class Ui {
       }
       const a = t.closest<HTMLElement>('[data-a]')?.dataset.a;
       if (a == 'back') this.back();
+      if (a == 'fullscreen') this.cb.toggleFullscreen();
+      const bind = t.closest<HTMLElement>('[data-bind]')?.dataset.bind as BindAction | undefined;
+      if (bind) {
+        const btn = t.closest<HTMLButtonElement>('button')!;
+        btn.textContent = 'Press a key…';
+        btn.classList.add('listening');
+        this.cb.captureKey((code) => {
+          if (code) {
+            // A key does one thing: take it away from any other action first.
+            for (const k of Object.keys(s.keys) as BindAction[]) s.keys[k] = s.keys[k].filter((c) => c != code);
+            s.keys[bind] = [code, ...s.keys[bind]].slice(0, 4);
+            this.cb.settingsChanged(s, 'keys');
+          }
+          el.querySelector('.keys-section')!.outerHTML = `<section class="keys-section"><h3>Controls</h3>${this.keyRows()}<button data-a="keys-reset">Reset to defaults</button></section>`;
+        });
+        return;
+      }
+      if (a == 'keys-reset') {
+        s.keys = JSON.parse(JSON.stringify(DEFAULT_KEYS));
+        this.cb.settingsChanged(s, 'keys');
+        el.querySelector('.keys-section')!.outerHTML = `<section class="keys-section"><h3>Controls</h3>${this.keyRows()}<button data-a="keys-reset">Reset to defaults</button></section>`;
+      }
       if (a == 'reset') {
         const btn = t.closest<HTMLButtonElement>('button')!;
         if (btn.dataset.confirm) {

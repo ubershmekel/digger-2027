@@ -22,11 +22,24 @@ function write(key: string, value: unknown): void {
 
 export type Quality = 'low' | 'medium' | 'high';
 
+/** Rebindable actions. Each has a list of KeyboardEvent.code values. */
+export type BindAction = 'left' | 'right' | 'up' | 'down' | 'fire' | 'pause';
+
+export const DEFAULT_KEYS: Record<BindAction, string[]> = {
+  left: ['ArrowLeft', 'KeyA', 'Numpad4'],
+  right: ['ArrowRight', 'KeyD', 'Numpad6'],
+  up: ['ArrowUp', 'KeyW', 'Numpad8'],
+  down: ['ArrowDown', 'KeyS', 'Numpad2'],
+  fire: ['Space', 'ControlLeft', 'ControlRight', 'F1', 'KeyZ', 'KeyJ'],
+  pause: ['Escape', 'KeyP', 'Pause'],
+};
+
 export interface Settings {
   graphics: 'hd' | 'classic';
   audio: 'hd' | 'classic';
   crt: boolean;
-  quality: Quality;
+  /** 'auto' picks a level from measured frame times. */
+  quality: Quality | 'auto';
   masterVolume: number;
   musicVolume: number;
   sfxVolume: number;
@@ -37,13 +50,18 @@ export interface Settings {
   speed: number;
   reducedMotion: boolean;
   touchControls: 'auto' | 'on' | 'off';
+  /** Stronger contrast between actors and earth; monsters turn violet so they never match the emeralds. */
+  highContrast: boolean;
+  /** Short text captions for sound cues. */
+  captions: boolean;
+  keys: Record<BindAction, string[]>;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
   graphics: 'hd',
   audio: 'hd',
   crt: true,
-  quality: 'high',
+  quality: 'auto',
   masterVolume: 0.8,
   musicVolume: 0.7,
   sfxVolume: 0.8,
@@ -52,6 +70,9 @@ export const DEFAULT_SETTINGS: Settings = {
   speed: 1,
   reducedMotion: false,
   touchControls: 'auto',
+  highContrast: false,
+  captions: false,
+  keys: DEFAULT_KEYS,
 };
 
 const SETTINGS_KEY = 'digger2027.settings.v1';
@@ -59,6 +80,8 @@ const SETTINGS_KEY = 'digger2027.settings.v1';
 export function loadSettings(): Settings {
   const s = read<Partial<Settings>>(SETTINGS_KEY) ?? {};
   const out = { ...DEFAULT_SETTINGS, ...s };
+  out.keys = { ...DEFAULT_KEYS, ...(s.keys ?? {}) };
+  for (const k of Object.keys(DEFAULT_KEYS) as BindAction[]) out.keys[k] = [...out.keys[k]];
   if (!s.reducedMotion && typeof matchMedia == 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches)
     out.reducedMotion = true;
   return out;
@@ -66,6 +89,19 @@ export function loadSettings(): Settings {
 
 export function saveSettings(s: Settings): void {
   write(SETTINGS_KEY, s);
+}
+
+// --- Progress -------------------------------------------------------------------
+
+const PROGRESS_KEY = 'digger2027.progress.v1';
+
+/** Highest level reached in any game, for the starting-level picker. */
+export function maxLevelReached(): number {
+  return Math.max(1, read<{ maxLevel: number }>(PROGRESS_KEY)?.maxLevel ?? 1);
+}
+
+export function recordLevel(level: number): void {
+  if (level > maxLevelReached()) write(PROGRESS_KEY, { maxLevel: level });
 }
 
 // --- High scores --------------------------------------------------------------

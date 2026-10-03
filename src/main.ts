@@ -8,3 +8,7 @@ if (import.meta.env.DEV) {
   const auto = new URLSearchParams(location.search).get('autoplay');
   if (auto != null) app.devStart(parseInt(auto, 10) || 1);
 }
+
+// Offline play: cache the game after the first visit (production builds only).
+if (import.meta.env.PROD && 'serviceWorker' in navigator)
+  addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));

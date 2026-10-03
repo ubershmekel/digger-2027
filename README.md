@@ -4,7 +4,7 @@
 
 A fan-made, modern version of the original 1983 **[Digger](https://en.wikipedia.org/wiki/Digger_(video_game))** (Windmill Software, designed by Rob Sleath), a Mr. Do! / Dig Dug-style maze game.
 
-It's the same game: the same eight levels, the same rules, monster AI, timing and tunes, verified tick-for-tick against the original logic. What's new is the presentation and the comfort: real-time 3D graphics, jazz arrangements of the original music, and modern quality-of-life features. Press **F2** at any time to switch to the original CGA graphics, and **F3** for the original PC-speaker sound.
+It's the same game: the same eight levels, the same rules, monster AI, timing and tunes, verified tick-for-tick against the original logic. What's new is the presentation and the comfort: real-time 3D graphics, jazz arrangements of the original music, and modern quality-of-life features. Press **F2** at any time to switch to the original CGA graphics, and **F4** for the original PC-speaker sound.
 
 > License: **GPL-2.0-or-later** (see [LICENSE](LICENSE)). The upstream Digger Remastered code is GPLv2.
 >
@@ -18,11 +18,14 @@ It's the same game: the same eight levels, the same rules, monster AI, timing an
 | Fire | Space, Ctrl, F1, Z or J |
 | Pause | Esc or P |
 | Classic graphics on/off | F2 |
-| Classic sound on/off | F3 |
+| Classic sound on/off | F4 |
 | Mute | M |
-| Skip a cut-scene | Press Fire twice (a prompt appears) |
+| Fullscreen | F |
+| Skip a cut-scene | Enter, or Fire twice (a prompt appears) |
 
-Gamepads work (D-pad or stick, A to fire, Start to pause), and touch devices get an on-screen D-pad and fire button.
+Movement, Fire and Pause keys can be rebound in **Settings → Controls**, which also lists every hotkey.
+
+Gamepads work (D-pad or stick, A to fire, Start to pause). On touch devices, touch anywhere on the left and drag to steer with a floating joystick, and tap anywhere on the right to fire. The touch controls hide whenever a menu is open.
 
 ## Development
 
@@ -33,7 +36,12 @@ npm install
 npm run dev
 ```
 
-`npm test` runs the test suite and `npm run build` makes a static build in `dist/`. Every push to `main` deploys to GitHub Pages through `.github/workflows/deploy.yml`.
+- `npm test` runs the unit and parity tests.
+- `npm run lint` runs [oxlint](https://oxc.rs/). TypeScript 7's native compiler has no JS API, so typescript-eslint can't run.
+- `npm run build` makes a static build in `dist/`.
+- `npm run e2e` runs Playwright smoke tests against the build in Chromium, Firefox and WebKit.
+
+Every push to `main` runs all of these in CI and then deploys to GitHub Pages (`.github/workflows/deploy.yml`). The built site works offline after the first visit, via a service worker.
 
 Dev helpers: `?autoplay` (or `?autoplay=3` for level 3) jumps straight into a game, and `window.app` is exposed in dev builds.
 
@@ -49,7 +57,7 @@ Dev helpers: `?autoplay` (or `?autoplay=3` for level 3) jumps straight into a ga
 | **Beautiful music, same notes** | Jazz arrangements of the *same* melodies: the main theme, the bonus-mode theme, the death dirge and the level jingle. Sound effects keep their original pitch contours, with richer timbre. |
 | **Never make the player wait** | Every cut-scene and transition is skippable. Skipping fast-forwards the game logic, so nothing desyncs. |
 | **Quality of life** | Separate master, music and effects volume, mute, pause, gamepad, touch controls, high scores saved in the browser. |
-| **Classic mode** | Hotkeys and menu toggles switch the graphics (F2) and the sound (F3) back to the original CGA look and PC-speaker sound, live, mid-game, and back again. |
+| **Classic mode** | Hotkeys and menu toggles switch the graphics (F2) and the sound (F4) back to the original CGA look and PC-speaker sound, live, mid-game, and back again. |
 
 ### Non-goals (for v1)
 - New levels, new enemies or rule changes. (A level editor or "remix" mode could come after 1.0.)
@@ -154,26 +162,27 @@ Composed as code, and synthesized: no samples ship with the game.
 ## 6. Classic mode
 
 - **Graphics (F2):** the sim's own CGA framebuffer, scaled with nearest-neighbour filtering, with an optional CRT overlay.
-- **Sound (F3):** the original PC-speaker engine, ported to an AudioWorklet. Music and effects are on separate channels, so the volume sliders still work.
+- **Sound (F4):** the original PC-speaker engine, ported to an AudioWorklet. Music and effects are on separate channels, so the volume sliders still work.
 
 ## 7. Quality-of-life features
 
 - [x] Master, music and effects volume, plus mute (M). All settings persist and apply live.
 - [x] Audio unlocks on the first interaction, via a "press any key" start screen.
-- [x] Arrow keys / WASD, Space / Ctrl / F1 to fire, Esc / P to pause.
+- [x] Rebindable movement, Fire and Pause keys, plus a full hotkey list in Settings.
 - [x] Gamepad support.
-- [x] Touch controls (on-screen D-pad and fire), automatic on touch devices.
+- [x] Touch controls: a floating joystick (touch, then drag) and a large fire zone, shown only during play.
 - [x] Turn buffering *(experimental)*: a turn pressed just before a junction is remembered and taken when legal. Off / Short / Normal / Long; Off plays exactly like 1983.
 - [x] Auto-pause when the tab or window loses focus.
 - [x] Game speed: Slow / Original / Fast.
 - [x] 1P / 2P alternating, as in the original.
-- [x] Every cut-scene is skippable, via a fast-forward in the sim.
+- [x] Starting-level select, for any level you've reached.
+- [x] Every cut-scene is skippable: Enter, or Fire twice. A skipping press never becomes a shot, and Fire is ignored for a moment as each life starts.
+- [x] In 3D, the screen fades to black after a death and fades back in on revive.
 - [x] High scores (top 10 with initials) kept in `localStorage`, surviving restarts. Old `ds` scores from the reference port are imported. Reset is in Settings. Scores made with assists are marked.
-- [x] Graphics quality presets (Low / Medium / High) and reduced motion.
-- [ ] Rebindable keys.
-- [ ] Starting-level select.
-- [ ] Fullscreen toggle.
-- [ ] Colour-blind and high-contrast options; captions for audio cues.
+- [x] Graphics quality: Auto (steps down when frames are slow, and switches to classic if even Low is unplayable), Low, Medium, High.
+- [x] Fullscreen (F or Settings).
+- [x] Accessibility: reduced motion; high contrast (darker earth, brighter actors, violet monsters so they never blend with emeralds); captions for sound cues.
+- [x] Offline play after the first visit.
 
 ---
 
@@ -184,7 +193,7 @@ Composed as code, and synthesized: no samples ship with the game.
 - [x] GitHub Pages deploy via GitHub Actions.
 - [x] `tools/extract-data.mjs`: CGA sprites and font extracted into TypeScript data.
 - [x] Measure the reference timing (76 ms ticks).
-- [ ] Lint and Playwright smoke tests.
+- [x] Lint (oxlint) and Playwright smoke tests.
 
 ### Phase 1: Faithful sim + classic renderer
 - [x] Port the sim module by module, typed, with no globals or DOM.
@@ -200,22 +209,21 @@ Composed as code, and synthesized: no samples ship with the game.
 
 ### Phase 3: Audio
 - [x] Mixer buses (master/music/effects), settings UI, persistence.
-- [x] Synthesized instruments, the 4 arranged cues, offline-rendered seamless loops.
-- [x] Effects set, plus the classic/jazz toggle (F3).
-- [ ] Beat-synced transitions between cues; mix polish.
+- [x] Synthesized instruments, the 4 arranged cues, offline-rendered seamless loops. Rendering is segmented, so the main theme is ready in seconds.
+- [x] Effects set, plus the classic/jazz toggle (F4).
+- [x] Beat-synced transitions between the main and bonus themes; loudness normalization.
 
 ### Phase 4: Art & polish
 - [x] Procedural models and animations: Digger, Nobbin, Hobbin (plus the morph), bag, gold, emerald, cherry, fireball, gravestone.
 - [x] Level soil themes, lighting, post-processing, particles.
-- [x] Title / cast sequence with high scores, level title cards, game over and high-score entry.
-- [x] Quality presets.
-- [ ] Automatic quality detection and a performance pass on low-end devices.
+- [x] Title / cast sequence with entrances and exits, high scores, level title cards, game over and high-score entry.
+- [x] Entrance animations for every actor in 3D.
+- [x] Quality presets with automatic detection.
 
 ### Phase 5: QoL & ship
-- [x] Gamepad, touch, PWA manifest.
-- [ ] Rebinding, more accessibility options, offline cache.
-- [ ] Cross-browser testing (Chrome, Firefox, Safari desktop + iOS, Android Chrome).
-- [ ] v1.0 release.
+- [x] Gamepad, touch, rebinding, accessibility options, PWA manifest, offline cache.
+- [x] Automated smoke tests in Chromium, Firefox and WebKit (desktop engines). Real iOS and Android devices haven't been tested yet.
+- [x] v1.0 release.
 
 ### Later / maybe
 Replays and sharing, a daily-seed challenge, a level editor, "remix" levels, simultaneous 2P co-op (Digger Remastered added a simultaneous 2-player mode).

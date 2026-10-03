@@ -6,7 +6,8 @@ import type { Renderer } from '../render/renderer';
 import { AudioEngine } from '../audio/engine';
 import { Controls, type UiAction } from '../input/controls';
 import { Ui } from '../ui/ui';
-import { HighScores, loadSettings, saveSettings, type Settings } from '../storage/storage';
+import { HighScores, loadSettings, maxLevelReached, recordLevel, saveSettings, type Quality, type Settings } from '../storage/storage';
+import type { SoundCmd } from '../sim/sound';
 import type { Key } from '../sim/input';
 
 export class App {
@@ -27,6 +28,11 @@ export class App {
   private start = performance.now();
   private assisted = false;
   private wasInGame = false;
+  private fadeEl: HTMLElement;
+  /** Fire presses that must not reach the sim (cut-scenes, level start, a skipping press). */
+  private fireBlocked = false;
+  private playSince = 0;
+  private lastScene = '';
   private skipArmedAt = -1;
   private skippableSince = 0;
   private wasSkippable = false;
@@ -34,21 +40,32 @@ export class App {
   constructor(root: HTMLElement) {
     this.stage = document.createElement('div');
     this.stage.className = 'stage';
+    this.fadeEl = document.createElement('div');
+    this.fadeEl.className = 'fade';
     root.appendChild(this.stage);
+    this.stage.appendChild(this.fadeEl);
 
     this.game = new Game((Math.random() * 0x7fffffff) | 0, {
       highScores: () => this.scores.list(),
       isHighScore: (s) => this.scores.qualifies(s),
     }, { turnBuffer: this.settings.turnBuffer });
 
-    this.driver = new Driver(this.game, (e) => this.audio?.command(e.cmd, e.arg));
+    this.driver = new Driver(this.game, (e, skipping) => {
+      this.audio?.command(e.cmd, e.arg);
+      if (!skipping) this.captionFor(e.cmd, e.arg);
+    });
     this.driver.speed = this.settings.speed;
 
     this.active = this.classic;
     this.stage.appendChild(this.classic.canvas);
+    // Keep the stage dark until the 3D view is ready, rather than flashing the classic screen.
+    if (this.settings.graphics == 'hd') this.stage.classList.add('loading');
 
     this.ui = new Ui(root, this.settings, () => this.scores.list(), {
-      start: (n) => this.startGame(n),
+      start: (n, level) => this.startGame(n, level),
+      maxLevel: () => maxLevelReached(),
+      captureKey: (cb) => this.controls.captureKey(cb),
+      toggleFullscreen: () => this.toggleFullscreen(),
       resume: () => this.resume(),
       quit: () => this.quit(),
       settingsChanged: (s, k) => this.applySetting(s, k),
@@ -63,8 +80,8 @@ export class App {
 
     const app = this;
     this.controls = new Controls({
-      press: (k: Key) => this.game.input.press(k),
-      release: (k: Key) => this.game.input.release(k),
+      press: (k: Key) => this.press(k),
+      release: (k: Key) => this.release(k),
       action: (a) => this.action(a),
       get menuOpen() {
         return app.ui.menuOpen;
@@ -103,6 +120,12 @@ export class App {
       case 'confirm':
         this.ui.confirm();
         break;
+      case 'skipNow':
+        if (this.game.skippable) {
+          this.skipArmedAt = -1;
+          this.driver.skip();
+        }
+        break;
       case 'skip': {
         // Skipping takes two Fire presses, so a death mid-firefight isn't skipped by accident.
         // Presses in the first moment of a cut-scene don't count either.
@@ -126,6 +149,9 @@ export class App {
         this.ui.toast(this.settings.audio == 'hd' ? 'Jazz sound' : 'PC speaker sound');
         if (this.ui.screen == 'settings') this.ui.show('settings');
         break;
+      case 'fullscreen':
+        this.toggleFullscreen();
+        break;
       case 'mute':
         this.settings.muted = !this.settings.muted;
         this.applySetting(this.settings, 'muted');
@@ -139,9 +165,97 @@ export class App {
     this.ui.show(null);
   }
 
-  private startGame(players: number): void {
+  /** True while a Fire press should be swallowed instead of shooting. */
+  private fireLocked(): boolean {
+    return this.game.skippable || performance.now() - this.playSince < 600;
+  }
+
+  private press(k: Key): void {
+    if (k == 'fire' && (this.fireBlocked || this.fireLocked())) {
+      // Stays swallowed until released, so a held skip press can't become a shot.
+      this.fireBlocked = true;
+      return;
+    }
+    this.game.input.press(k);
+  }
+
+  private release(k: Key): void {
+    if (k == 'fire' && this.fireBlocked) this.fireBlocked = false;
+    this.game.input.release(k);
+  }
+
+  private toggleFullscreen(): void {
+    if (document.fullscreenElement) void document.exitFullscreen?.().catch(() => {});
+    else void document.documentElement.requestFullscreen?.().catch(() => this.ui.toast('Fullscreen is not available here'));
+  }
+
+  // --- Captions -----------------------------------------------------------------
+
+  private lastCaption = new Map<string, number>();
+
+  private captionFor(cmd: SoundCmd, arg: number): void {
+    if (!this.settings.captions) return;
+    const text: Partial<Record<SoundCmd, string>> = {
+      soundlevdone: '♪ Level complete fanfare',
+      soundem: '[gem chime]',
+      soundfall: '[bag falling]',
+      soundwobble: '[bag creaking]',
+      soundbreak: '[bag bursts open]',
+      soundgold: '[coins jingle]',
+      soundfire: '[fireball whoosh]',
+      soundexplode: '[pop]',
+      soundeatm: '[gulp!]',
+      soundddie: '[sad trombone]',
+      sound1up: '[extra life!]',
+      soundbonus: '[bonus timer ping]',
+    };
+    let t = text[cmd];
+    if (cmd == 'music') t = arg == 0 ? '♪ William Tell, as hard bop (bonus!)' : arg == 1 ? '♪ Popcorn, as swing jazz' : '♪ Funeral march';
+    if (!t) return;
+    // Rate-limit repeated cues so captions stay readable.
+    const now = performance.now();
+    if (now - (this.lastCaption.get(t) ?? 0) < 900) return;
+    this.lastCaption.set(t, now);
+    this.ui.caption(t);
+  }
+
+  // --- Auto quality ---------------------------------------------------------------
+
+  private effectiveQuality: Quality = matchMedia('(pointer: coarse)').matches ? 'medium' : 'high';
+  private perfFrames = 0;
+  private perfTime = 0;
+
+  private hdSettings(): Settings {
+    return { ...this.settings, quality: this.settings.quality == 'auto' ? this.effectiveQuality : this.settings.quality };
+  }
+
+  /** Steps quality down when frames are consistently slow (only in 'auto'). */
+  private measure(dt: number): void {
+    if (this.settings.quality != 'auto' || this.active === this.classic || this.driver.paused || document.hidden) return;
+    if (dt > 250) return; // tab switches, not rendering cost
+    this.perfFrames++;
+    this.perfTime += dt;
+    // Decide after ~1.5 s of frames (or 90 frames), whichever comes first.
+    if (this.perfFrames < 90 && !(this.perfTime > 1500 && this.perfFrames >= 4)) return;
+    const avg = this.perfTime / this.perfFrames;
+    this.perfFrames = this.perfTime = 0;
+    if (avg > 140 && this.effectiveQuality == 'low') {
+      // Unplayable even at the lightest 3D setting (e.g. software rendering): use classic.
+      this.settings.graphics = 'classic';
+      this.applySetting(this.settings, 'graphics');
+      this.ui.toast('This device is too slow for 3D: using classic graphics (F2 to retry)');
+      return;
+    }
+    if (avg > 21 && this.effectiveQuality != 'low') {
+      // Very slow (software rendering): go straight to the lightest setting.
+      this.effectiveQuality = avg > 60 || this.effectiveQuality == 'medium' ? 'low' : 'medium';
+      (this.hd as unknown as { configure?(s: Settings): void } | null)?.configure?.(this.hdSettings());
+    }
+  }
+
+  private startGame(players: number, level = 1): void {
     this.assisted = this.settings.turnBuffer > 0 || this.settings.speed != 1;
-    this.game.requestStart(players);
+    this.game.requestStart(players, level);
     this.ui.show(null);
   }
 
@@ -224,12 +338,16 @@ export class App {
         this.driver.speed = s.speed;
         if (s.speed != 1 && this.game.inGame) this.assisted = true;
         break;
+      case 'keys':
+        this.controls?.setKeys(s.keys);
+        break;
       case 'touchControls':
         this.setTouch();
         break;
       case 'reducedMotion':
+      case 'highContrast':
       case 'quality':
-        (this.hd as unknown as { configure?(s: Settings): void } | null)?.configure?.(s);
+        (this.hd as unknown as { configure?(s: Settings): void } | null)?.configure?.(this.hdSettings());
         break;
     }
     if (save) saveSettings(s);
@@ -249,16 +367,20 @@ export class App {
   }
 
   private setGraphics(mode: 'hd' | 'classic'): void {
-    if (mode == 'classic') return this.useRenderer(this.classic);
+    if (mode == 'classic') {
+      this.stage.classList.remove('loading');
+      return this.useRenderer(this.classic);
+    }
     if (this.hd) return this.useRenderer(this.hd);
     if (!this.hdLoading)
       this.hdLoading = import('../render/hd/hd')
         .then((m) => {
-          this.hd = new m.HdRenderer(this.settings);
+          this.hd = new m.HdRenderer(this.hdSettings());
           return this.hd;
         })
         .catch((e) => {
           console.error('3D renderer failed to load', e);
+          this.stage.classList.remove('loading');
           this.ui.toast('3D graphics unavailable on this device');
           return null;
         });
@@ -268,6 +390,7 @@ export class App {
   }
 
   private useRenderer(r: Renderer): void {
+    if (r !== this.classic) this.stage.classList.remove('loading');
     if (this.active === r) return;
     this.active.deactivate();
     this.active.canvas.remove();
@@ -289,6 +412,7 @@ export class App {
     const dt = now - this.last;
     this.last = now;
     this.controls.pollGamepads();
+    this.measure(dt);
     const events = this.driver.update(dt);
     if (this.driver.skipped) this.audio?.resync(this.game.sound.tune);
     this.handleEvents(events);
@@ -308,6 +432,7 @@ export class App {
   private handleEvents(events: SimEvent[]): void {
     for (const e of events) {
       if (e.type == 'gameStart') this.wasInGame = true;
+      if (e.type == 'levelStart') recordLevel(e.level);
     }
   }
 
@@ -325,8 +450,17 @@ export class App {
     this.wasSkippable = g.skippable;
     if (!g.skippable || performance.now() - this.skipArmedAt > 2500) this.skipArmedAt = -1;
     this.ui.showSkipHint(g.skippable && this.ui.screen == null && !this.driver.paused, this.skipArmedAt > 0);
+    // Touch controls only while actually playing, never over menus.
+    this.touchEl?.classList.toggle('away', this.ui.menuOpen || !g.inGame || g.scene == 'initials');
+    if (g.scene == 'play' && this.lastScene != 'play') this.playSince = performance.now();
+    this.lastScene = g.scene;
+    // In 3D, fade to black once the gravestone has risen, and back up when play resumes.
+    const d = g.digger;
+    const dead = g.main.gamedat[g.main.curplayer].dead;
+    const fade = this.active !== this.classic && ((g.scene == 'dying' && d.deathstage == 4 && d.deathtime < 30) || (g.scene == 'aftermath' && dead));
+    this.fadeEl.classList.toggle('on', fade);
     const hd = this.active !== this.classic;
-    this.ui.root.classList.toggle('hd-attract', hd && g.scene == 'attract');
+    this.ui.root.classList.toggle('hd-attract', this.settings.graphics == 'hd' && g.scene == 'attract');
     const playing = g.inGame && g.scene != 'initials';
     this.ui.setHudVisible(hd && playing);
     if (hd && playing) {
