@@ -81,6 +81,11 @@ class Speaker extends AudioWorkletProcessor {
   musicreleaserate = 0;
   musicstage = 0;
   musicn = 0;
+  /** Table step where the current note starts, and where the next one does. */
+  musicunit = 0;
+  nextunit = 0;
+  /** Ticks to skip into the next note loaded (set by seek). */
+  seekticks = 0;
   soundt0flag = false;
   // sample generator state
   rate = Math.floor(0x1234dd / sampleRate);
@@ -120,6 +125,12 @@ class Speaker extends AudioWorkletProcessor {
         break;
       case 'musicoff':
         this.musicoff();
+        break;
+      case 'seek':
+        this.seek(arg);
+        break;
+      case 'getpos':
+        this.port.postMessage({ tune: this.tuneno, pos: this.musicplaying ? this.musicunit + this.musicn / this.tunemul() : -1 });
         break;
       case 'soundstop':
         this.soundstop();
@@ -219,6 +230,7 @@ class Speaker extends AudioWorkletProcessor {
     this.tuneno = tune;
     this.musicp = 0;
     this.noteduration = 0;
+    this.musicunit = this.nextunit = this.seekticks = this.musicn = 0;
     switch (tune) {
       case 0:
         this.musicmaxvol = 50;
@@ -245,6 +257,37 @@ class Speaker extends AudioWorkletProcessor {
     if (tune == 2) this.soundddieflag = false;
   }
 
+  tunetable(): readonly number[] {
+    return this.tuneno == 0 ? BONUS_JINGLE : this.tuneno == 1 ? BACKG_JINGLE : DIRGE;
+  }
+
+  tunemul(): number {
+    return this.tuneno == 0 ? 3 : this.tuneno == 1 ? 6 : 10;
+  }
+
+  /** Moves the current tune to `units` table steps in (wrapping), mid-note if need be. */
+  seek(units: number): void {
+    const tune = this.tunetable();
+    let total = 0;
+    for (let i = 0; tune[i] != 0x7d64; i += 2) total += tune[i + 1];
+    units %= total;
+    let at = 0;
+    for (let i = 0; tune[i] != 0x7d64; i += 2) {
+      const d = tune[i + 1];
+      if (units < at + d) {
+        this.musicp = i;
+        this.nextunit = at;
+        this.noteduration = 0;
+        this.seekticks = Math.floor((units - at) * this.tunemul());
+        // Report the new spot right away, before the next tick loads the note.
+        this.musicunit = at;
+        this.musicn = this.seekticks;
+        return;
+      }
+      at += d;
+    }
+  }
+
   musicoff(): void {
     this.musicplaying = false;
     this.musicp = 0;
@@ -255,13 +298,20 @@ class Speaker extends AudioWorkletProcessor {
     if (this.noteduration != 0) this.noteduration--;
     else {
       this.musicstage = this.musicn = 0;
-      const tune = this.tuneno == 0 ? BONUS_JINGLE : this.tuneno == 1 ? BACKG_JINGLE : DIRGE;
-      const mul = this.tuneno == 0 ? 3 : this.tuneno == 1 ? 6 : 10;
+      const tune = this.tunetable();
+      const mul = this.tunemul();
       this.noteduration = tune[this.musicp + 1] * mul;
       this.musicnotewidth = this.tuneno == 1 ? 12 : this.noteduration - mul;
       this.notevalue = tune[this.musicp];
+      this.musicunit = this.nextunit;
+      this.nextunit += tune[this.musicp + 1];
       this.musicp += 2;
-      if (tune[this.musicp] == 0x7d64) this.musicp = 0;
+      if (tune[this.musicp] == 0x7d64) this.musicp = this.nextunit = 0;
+      if (this.seekticks) {
+        this.noteduration -= this.seekticks;
+        this.musicn = this.seekticks;
+        this.seekticks = 0;
+      }
     }
     this.musicn++;
     this.wavetype = 1;

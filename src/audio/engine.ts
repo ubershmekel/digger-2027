@@ -5,8 +5,11 @@ import speakerUrl from './classic/speaker.worklet.ts?worker&url';
 
 export interface AudioBackend {
   command(cmd: SoundCmd, arg: number): void;
-  /** Bring music back in line with the sim after a mode switch or a skip (-1 = silence). */
-  resync(tune: number): void;
+  /** Bring music back in line with the sim after a mode switch or a skip (-1 = silence),
+   *  optionally starting `pos` melody-table steps in. */
+  resync(tune: number, pos?: number | null): void;
+  /** How far into `tune` the music is, in melody-table steps, or null if it isn't playing. */
+  musicPos(tune: number): Promise<number | null>;
   setPaused(paused: boolean): void;
   /** Stop everything immediately (used when switching away from this backend). */
   silence(): void;
@@ -73,10 +76,12 @@ export class AudioEngine {
       }
     }
     const prev = this.backends[this.mode];
-    this.mode = mode;
     const next = this.backends[mode];
+    // Switching sound styles carries on from the same spot in the tune.
+    const pos = prev && prev !== next && tune >= 0 ? await prev.musicPos(tune) : null;
+    this.mode = mode;
     if (prev && prev !== next) prev.silence();
-    next?.resync(tune);
+    next?.resync(tune, pos);
   }
 
   private get active(): AudioBackend | undefined {
@@ -121,9 +126,24 @@ class ClassicAudio implements AudioBackend {
     this.node.port.postMessage({ cmd, arg });
   }
 
-  resync(tune: number): void {
+  resync(tune: number, pos?: number | null): void {
     this.command('soundstop', 0);
-    if (tune >= 0) this.command('music', tune);
+    if (tune < 0) return;
+    this.command('music', tune);
+    if (pos) this.node.port.postMessage({ cmd: 'seek', arg: pos });
+  }
+
+  musicPos(tune: number): Promise<number | null> {
+    return new Promise((resolve) => {
+      // The worklet may be unable to answer (e.g. a suspended context); then just restart the tune.
+      const timer = setTimeout(() => resolve(null), 150);
+      this.node.port.onmessage = (e: MessageEvent<{ tune: number; pos: number }>) => {
+        clearTimeout(timer);
+        this.node.port.onmessage = null;
+        resolve(e.data.tune == tune && e.data.pos >= 0 ? e.data.pos : null);
+      };
+      this.node.port.postMessage({ cmd: 'getpos', arg: 0 });
+    });
   }
 
   setPaused(paused: boolean): void {

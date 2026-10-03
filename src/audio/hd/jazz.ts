@@ -226,6 +226,9 @@ interface Playing {
 
 /** Tempo of the looping cues, so changes between them land on a beat. */
 const BPM: Partial<Record<CueId, number>> = { main: 168, bonus: 232 };
+/** Beats per melody-table step in the arrangements (see compose). */
+const STEP = 0.25;
+const TUNES: CueId[] = ['bonus', 'main', 'dirge'];
 
 const hz = (div: number) => PIT_HZ / div;
 const ftom = (f: number) => 69 + 12 * Math.log2(f / 440);
@@ -282,7 +285,7 @@ class Jazz implements AudioBackend {
     return p;
   }
 
-  private start(id: CueId): void {
+  private start(id: CueId, pos = 0): void {
     const buf = this.buffers.get(id);
     // Switching between the two looping cues waits for the next beat of the old one
     // (at most a third of a second), so the band changes tune in time.
@@ -303,8 +306,9 @@ class Jazz implements AudioBackend {
     gain.gain.setValueAtTime(0, t);
     gain.gain.linearRampToValueAtTime(1, t + 0.04);
     src.connect(gain).connect(this.music);
-    src.start(t + 0.01);
-    this.playing = { id, src, gain, at: t + 0.01 };
+    const offset = BPM[id] ? (pos * STEP * 60) / BPM[id]! % buf.duration : 0;
+    src.start(t + 0.01, offset);
+    this.playing = { id, src, gain, at: t + 0.01 - offset };
     src.onended = () => {
       if (this.playing?.src === src) this.playing = null;
     };
@@ -321,9 +325,9 @@ class Jazz implements AudioBackend {
     this.playing = null;
   }
 
-  private play(id: CueId): void {
+  private play(id: CueId, pos = 0): void {
     this.wanted = id;
-    this.start(id);
+    this.start(id, pos);
   }
 
   private stopLoops(): void {
@@ -598,12 +602,20 @@ class Jazz implements AudioBackend {
     });
   }
 
-  resync(tune: number): void {
+  resync(tune: number, pos?: number | null): void {
     this.stopLoops();
     if (tune < 0) {
       this.wanted = null;
       this.stopMusic(0.2);
-    } else this.play(tune == 0 ? 'bonus' : tune == 1 ? 'main' : 'dirge');
+    } else this.play(TUNES[tune], pos ?? 0);
+  }
+
+  async musicPos(tune: number): Promise<number | null> {
+    const p = this.playing;
+    const bpm = p && p.id == TUNES[tune] ? BPM[p.id] : undefined;
+    if (!p || !bpm) return null;
+    const into = Math.max(0, this.ctx.currentTime - p.at) % p.src.buffer!.duration;
+    return (into * bpm) / 60 / STEP;
   }
 
   setPaused(): void {
