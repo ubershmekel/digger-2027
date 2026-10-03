@@ -1,0 +1,133 @@
+// Persistent settings and high scores in localStorage. Every access is guarded:
+// private browsing or blocked storage just means nothing persists.
+
+function read<T>(key: string): T | null {
+  try {
+    const s = localStorage.getItem(key);
+    return s == null ? null : (JSON.parse(s) as T);
+  } catch {
+    return null;
+  }
+}
+
+function write(key: string, value: unknown): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+// --- Settings ---------------------------------------------------------------
+
+export type Quality = 'low' | 'medium' | 'high';
+
+export interface Settings {
+  graphics: 'hd' | 'classic';
+  audio: 'hd' | 'classic';
+  crt: boolean;
+  quality: Quality;
+  masterVolume: number;
+  musicVolume: number;
+  sfxVolume: number;
+  muted: boolean;
+  /** Ticks a buffered turn is remembered (0 = off, original behaviour). */
+  turnBuffer: number;
+  /** Game speed multiplier; 1 = original. */
+  speed: number;
+  reducedMotion: boolean;
+  touchControls: 'auto' | 'on' | 'off';
+}
+
+export const DEFAULT_SETTINGS: Settings = {
+  graphics: 'hd',
+  audio: 'hd',
+  crt: true,
+  quality: 'high',
+  masterVolume: 0.8,
+  musicVolume: 0.7,
+  sfxVolume: 0.8,
+  muted: false,
+  turnBuffer: 4,
+  speed: 1,
+  reducedMotion: false,
+  touchControls: 'auto',
+};
+
+const SETTINGS_KEY = 'digger2027.settings.v1';
+
+export function loadSettings(): Settings {
+  const s = read<Partial<Settings>>(SETTINGS_KEY) ?? {};
+  const out = { ...DEFAULT_SETTINGS, ...s };
+  if (!s.reducedMotion && typeof matchMedia == 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches)
+    out.reducedMotion = true;
+  return out;
+}
+
+export function saveSettings(s: Settings): void {
+  write(SETTINGS_KEY, s);
+}
+
+// --- High scores --------------------------------------------------------------
+
+export interface HighScore {
+  initials: string;
+  score: number;
+  /** Set when the score was made with non-original rules (turn buffering, speed). */
+  assisted?: boolean;
+  date?: string;
+}
+
+const SCORES_KEY = 'digger2027.highscores.v1';
+const LEGACY_KEY = 'ds';
+const TABLE_SIZE = 10;
+
+export class HighScores {
+  private table: HighScore[];
+
+  constructor() {
+    this.table = read<HighScore[]>(SCORES_KEY) ?? this.importLegacy();
+    this.table = this.table.filter((e) => e && typeof e.score == 'number').slice(0, TABLE_SIZE);
+  }
+
+  /** The old JS port stored ten space-separated scores under "ds". */
+  private importLegacy(): HighScore[] {
+    try {
+      const ds = localStorage.getItem(LEGACY_KEY);
+      if (!ds) return [];
+      const scores = ds
+        .split(' ')
+        .map((s) => parseInt(s, 10))
+        .filter((n) => n > 0)
+        .sort((a, b) => b - a);
+      const table = scores.map((score) => ({ initials: '...', score }));
+      write(SCORES_KEY, table);
+      return table;
+    } catch {
+      return [];
+    }
+  }
+
+  list(): HighScore[] {
+    return this.table.slice();
+  }
+
+  qualifies(score: number): boolean {
+    if (score <= 0) return false;
+    return this.table.length < TABLE_SIZE || score > this.table[this.table.length - 1].score;
+  }
+
+  add(entry: HighScore): number {
+    let i = this.table.findIndex((e) => entry.score > e.score);
+    if (i < 0) i = this.table.length;
+    this.table.splice(i, 0, entry);
+    this.table.length = Math.min(this.table.length, TABLE_SIZE);
+    write(SCORES_KEY, this.table);
+    return i;
+  }
+
+  reset(): void {
+    this.table = [];
+    write(SCORES_KEY, this.table);
+  }
+}
