@@ -630,6 +630,55 @@ input[type='range']::-moz-range-thumb {
   border-left: 7px solid #e8c35a;
 }
 
+/* Era switch: sits in the sky above the grass, and says which year is on screen. */
+.era {
+  position: absolute;
+  top: max(14px, env(safe-area-inset-top));
+  right: max(16px, env(safe-area-inset-right));
+  padding: 6px 13px 6px 11px;
+  border-radius: 99px;
+  font-size: 0.85rem;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  color: var(--gold);
+  background: rgba(20, 14, 10, 0.6);
+  border-color: var(--panel-edge);
+  backdrop-filter: blur(6px);
+}
+
+.era[hidden] {
+  display: none;
+}
+
+.era::before {
+  content: '⇄';
+  margin-right: 7px;
+  letter-spacing: 0;
+  opacity: 0.7;
+}
+
+.era:hover {
+  background: rgba(40, 28, 18, 0.8);
+  border-color: rgba(255, 214, 150, 0.4);
+}
+
+/* 1983 wears the CGA palette. */
+.era[data-era='1983'] {
+  border-radius: 0;
+  font-family: ui-monospace, 'Cascadia Mono', Menlo, monospace;
+  color: #55ff55;
+  background: rgba(0, 0, 0, 0.75);
+  border-color: #ff5555;
+  backdrop-filter: none;
+}
+
+/* Clear of the touch pause button, and as easy to hit. */
+.has-touch .era {
+  right: calc(max(16px, env(safe-area-inset-right)) + 56px);
+  top: 16px;
+  min-height: 44px;
+}
+
 .fade {
   position: absolute;
   inset: 0;
@@ -1076,6 +1125,12 @@ a.button:focus-visible {
 
 .hud-p2 {
   justify-self: end;
+  /* Leave the corner to the era switch. */
+  margin-right: 84px;
+}
+
+.has-touch .hud-p2 {
+  margin-right: 140px;
 }
 
 /* Sound captions */

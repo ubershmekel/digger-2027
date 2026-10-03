@@ -68,6 +68,7 @@ export class App {
       maxLevel: () => maxLevelReached(),
       captureKey: (cb) => this.controls.captureKey(cb),
       toggleFullscreen: () => this.toggleFullscreen(),
+      toggleEra: () => this.toggleEra(),
       resume: () => this.resume(),
       quit: () => this.quit(),
       settingsChanged: (s, k) => this.applySetting(s, k),
@@ -186,6 +187,15 @@ export class App {
   private toggleFullscreen(): void {
     if (document.fullscreenElement) void document.exitFullscreen?.().catch(() => {});
     else void document.documentElement.requestFullscreen?.().catch(() => this.ui.toast('Fullscreen is not available here'));
+  }
+
+  /** Graphics decide the direction; the sound style goes along with them. */
+  private toggleEra(): void {
+    const mode = this.settings.graphics == 'hd' ? 'classic' : 'hd';
+    this.settings.graphics = this.settings.audio = mode;
+    this.applySetting(this.settings, 'graphics');
+    this.applySetting(this.settings, 'audio');
+    this.ui.toast(mode == 'hd' ? '2027: 3D graphics and jazz' : '1983: classic graphics and PC speaker');
   }
 
   // --- Captions -----------------------------------------------------------------
@@ -487,6 +497,7 @@ export class App {
     const hd = this.active !== this.classic;
     this.ui.root.classList.toggle('hd-attract', this.settings.graphics == 'hd' && g.scene == 'attract');
     const playing = g.inGame && g.scene != 'initials';
+    this.ui.updateEra(this.ui.screen == 'menu' || this.ui.screen == null);
     this.ui.setHudVisible(hd && playing);
     if (hd && playing) {
       const m = g.main;

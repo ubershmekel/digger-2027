@@ -57,7 +57,7 @@ Dev helpers: `?autoplay` (or `?autoplay=3` for level 3) jumps straight into a ga
 | **Beautiful music, same notes** | Jazz arrangements of the *same* melodies: the main theme, the bonus-mode theme, the death dirge and the level jingle. Sound effects keep their original pitch contours, with richer timbre. |
 | **Never make the player wait** | Every cut-scene and transition is skippable. Skipping fast-forwards the game logic, so nothing desyncs. |
 | **Quality of life** | Separate master, music and effects volume, mute, pause, gamepad, touch controls, high scores saved in the browser. |
-| **Classic mode** | Hotkeys and menu toggles switch the graphics (F2) and the sound (F4) back to the original CGA look and PC-speaker sound, live, mid-game, and back again. |
+| **Classic mode** | Hotkeys and menu toggles switch the graphics (F2) and the sound (F4) back to the original CGA look and PC-speaker sound, live, mid-game, and back again. The year button in the top corner (2027 ⇄ 1983) switches both at once. |
 
 ### Non-goals (for v1)
 - New levels, new enemies or rule changes. (A level editor or "remix" mode could come after 1.0.)

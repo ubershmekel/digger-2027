@@ -11,6 +11,8 @@ export interface UiCallbacks {
   /** Hands the next key press to `cb` ('' when cancelled). */
   captureKey(cb: (code: string) => void): void;
   toggleFullscreen(): void;
+  /** Switches graphics and sound together between 2027 and 1983. */
+  toggleEra(): void;
   resume(): void;
   quit(): void;
   settingsChanged(s: Settings, key: keyof Settings): void;
@@ -63,6 +65,7 @@ export class Ui {
   private toastEl: HTMLElement;
   private skipEl: HTMLElement;
   private captionEl: HTMLElement;
+  private eraEl: HTMLElement;
   private captionTimer = 0;
   private startLevel = 1;
   screen: Screen = null;
@@ -86,7 +89,13 @@ export class Ui {
     this.toastEl = h(`<div class="toast" role="status" aria-live="polite"></div>`);
     this.skipEl = h(`<div class="skip-hint" hidden></div>`);
     this.captionEl = h(`<div class="caption" aria-live="polite"></div>`);
-    this.root.append(this.hud, this.skipEl, this.captionEl, this.panel, this.toastEl);
+    // Not focusable: Space and Enter belong to the game, and F2/F4 cover the keyboard.
+    this.eraEl = h(`<button class="era" tabindex="-1" hidden></button>`);
+    this.eraEl.addEventListener('click', () => {
+      this.eraEl.blur();
+      this.cb.toggleEra();
+    });
+    this.root.append(this.hud, this.skipEl, this.captionEl, this.panel, this.eraEl, this.toastEl);
     host.appendChild(this.root);
     this.panel.addEventListener('keydown', (e) => this.navKeys(e));
   }
@@ -115,6 +124,18 @@ export class Ui {
     const text = armed ? 'Press Fire again to skip' : 'Fire twice to skip';
     if (this.skipEl.textContent != text) this.skipEl.textContent = text;
     this.skipEl.classList.toggle('armed', armed);
+  }
+
+  /** The corner switch between the 2027 and 1983 presentations, labelled with the current one. */
+  updateEra(on: boolean): void {
+    this.eraEl.hidden = !on;
+    const era = this.settings.graphics == 'hd' ? '2027' : '1983';
+    if (this.eraEl.dataset.era == era) return;
+    this.eraEl.dataset.era = era;
+    this.eraEl.textContent = era;
+    const other = era == '2027' ? '1983: classic graphics and PC-speaker sound' : '2027: 3D graphics and jazz';
+    this.eraEl.title = `Switch to ${other}`;
+    this.eraEl.setAttribute('aria-label', `${era}. Switch to ${other}`);
   }
 
   // --- HUD ------------------------------------------------------------------
