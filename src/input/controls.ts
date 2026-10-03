@@ -3,7 +3,7 @@
 import type { Key } from '../sim/input';
 import { DEFAULT_KEYS, type BindAction } from '../storage/storage';
 
-export type UiAction = 'pause' | 'skip' | 'skipNow' | 'toggleGraphics' | 'toggleSound' | 'mute' | 'fullscreen' | 'confirm' | 'back';
+export type UiAction = 'pause' | 'skip' |'toggleGraphics' | 'toggleSound' | 'mute' | 'fullscreen' | 'confirm' | 'back';
 
 export interface ControlsTarget {
   press(k: Key): void;
@@ -71,9 +71,8 @@ export class Controls {
       return;
     }
     const k = bound as Key | undefined;
-    // Only Fire (or Enter) counts toward skipping a cut-scene, so steering never skips by accident.
+    // Only Fire counts toward skipping a cut-scene, so steering never skips by accident.
     if (!e.repeat && k == 'fire') this.t.action('skip');
-    if (!e.repeat && e.code == 'Enter') this.t.action('skipNow');
     if (k) {
       e.preventDefault();
       if (!this.held.has(k)) {

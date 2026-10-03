@@ -668,6 +668,11 @@ input[type='range']::-moz-range-thumb {
   pointer-events: none;
 }
 
+/* Desktop has the room: make the hint hard to miss. */
+body:not(.has-touch) .skip-hint {
+  font-size: clamp(1.9rem, 3.2vw, 2.5rem);
+}
+
 @keyframes blink {
   50% {
     opacity: 0.35;
@@ -830,46 +835,7 @@ input[type='range']::-moz-range-thumb {
 @media (prefers-reduced-motion: reduce) {
   .panel,
   button.big,
-  .fade {
-  position: absolute;
-  inset: 0;
-  background: #000;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.9s ease;
-  z-index: 1;
-}
-
-.fade.on {
-  opacity: 1;
-  transition-duration: 1.6s;
-}
-
-.skip-hint.armed {
-  color: var(--gold);
-  opacity: 1;
-  animation: none;
-  font-weight: 700;
-}
-
-.hud-title {
-  font-weight: 900;
-  font-size: 1.05rem;
-  letter-spacing: 0.32em;
-  background: linear-gradient(180deg, #fff3d6 0%, var(--gold) 60%, var(--gold-deep) 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.8));
-}
-
-.hud-title b {
-  font-weight: 600;
-  letter-spacing: 0.4em;
-  opacity: 0.8;
-}
-
-.skip-hint {
+  .skip-hint {
     animation: none;
   }
 }

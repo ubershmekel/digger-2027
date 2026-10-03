@@ -112,7 +112,7 @@ export class Ui {
 
   showSkipHint(on: boolean, armed = false): void {
     this.skipEl.hidden = !on;
-    const text = armed ? 'Press Fire again to skip' : 'Fire twice or Enter to skip';
+    const text = armed ? 'Press Fire again to skip' : 'Fire twice to skip';
     if (this.skipEl.textContent != text) this.skipEl.textContent = text;
     this.skipEl.classList.toggle('armed', armed);
   }
@@ -299,7 +299,7 @@ export class Ui {
             <p>When the <b class="cherry">cherry</b> appears, grab it: for a short time you can eat the monsters. 200, 400, 800…</p>
             <p>Eight emeralds in a row: +250. Extra life every 20,000 points.</p>
           </div>
-          <p class="fine">Esc pause · F2 classic graphics · F4 classic sound · M mute · Fire twice or Enter skips a cut-scene · gamepads supported</p>
+          <p class="fine">Esc pause · F2 classic graphics · F4 classic sound · M mute · Fire twice skips a cut-scene · gamepads supported</p>
           <nav class="buttons row"><button data-a="back" autofocus>Back</button></nav>
         </div>`);
         el.querySelector('[data-a=back]')!.addEventListener('click', () => this.back());
@@ -437,7 +437,6 @@ export class Ui {
             <dt>F4</dt><dd>Jazz ⇄ PC-speaker sound</dd>
             <dt>M</dt><dd>Mute</dd>
             <dt>F</dt><dd>Fullscreen</dd>
-            <dt>Enter</dt><dd>Skip a cut-scene</dd>
             <dt>Fire ×2</dt><dd>Skip a cut-scene</dd>
             <dt>Gamepad</dt><dd>D-pad or stick to move, A to fire, Start to pause</dd>
           </dl>

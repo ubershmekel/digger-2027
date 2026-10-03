@@ -28,7 +28,10 @@ test('plays, pauses, opens settings and quits (classic mode)', async ({ page }) 
   await expect(page.locator('canvas.classic-canvas')).toBeVisible();
 
   // Skip the level intro, then move and fire.
-  await page.keyboard.press('Enter');
+  await expect(page.getByText('Fire twice to skip')).toBeVisible();
+  await page.waitForTimeout(500); // presses in the first moment of a cut-scene don't count
+  await page.keyboard.press('Space');
+  await page.keyboard.press('Space');
   await page.keyboard.down('ArrowUp');
   await page.waitForTimeout(800);
   await page.keyboard.up('ArrowUp');

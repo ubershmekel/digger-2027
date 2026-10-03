@@ -125,12 +125,6 @@ export class App {
       case 'confirm':
         this.ui.confirm();
         break;
-      case 'skipNow':
-        if (this.game.skippable) {
-          this.skipArmedAt = -1;
-          this.driver.skip();
-        }
-        break;
       case 'skip': {
         // Skipping takes two Fire presses, so a death mid-firefight isn't skipped by accident.
         // Presses in the first moment of a cut-scene don't count either.
