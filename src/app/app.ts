@@ -304,10 +304,8 @@ export class App {
         this.audio = new AudioEngine();
         // Resume right here, still inside the user's tap: iOS ignores later resumes.
         void this.audio.ctx.resume().catch(() => {});
-        // And retry on every later interaction until it is running.
-        const retry = () => {
-          if (this.audio && this.audio.ctx.state != 'running') void this.audio.ctx.resume().catch(() => {});
-        };
+        // And retry on every later interaction until it is running (but not while paused).
+        const retry = () => void this.audio?.unlock();
         for (const ev of ['pointerdown', 'touchend', 'keydown']) addEventListener(ev, retry, { capture: true, passive: true });
         this.audio.setHdFactory(async (engine) => (await import('../audio/hd/jazz')).createJazz(engine));
         this.applyVolumes();

@@ -21,6 +21,7 @@ export class AudioEngine {
   private mode: 'hd' | 'classic' = 'hd';
   private ready: Promise<void>;
   private hdFactory: ((engine: AudioEngine) => Promise<AudioBackend>) | null = null;
+  private paused = false;
 
   constructor() {
     this.ctx = new AudioContext({ latencyHint: 'interactive' });
@@ -47,8 +48,9 @@ export class AudioEngine {
     this.hdFactory = f;
   }
 
+  /** Resumes the context unless the game deliberately paused it. */
   async unlock(): Promise<void> {
-    if (this.ctx.state != 'running') await this.ctx.resume().catch(() => {});
+    if (!this.paused && this.ctx.state != 'running') await this.ctx.resume().catch(() => {});
   }
 
   setVolumes(master: number, music: number, sfx: number, muted: boolean): void {
@@ -90,6 +92,7 @@ export class AudioEngine {
   }
 
   setPaused(paused: boolean): void {
+    this.paused = paused;
     for (const b of Object.values(this.backends)) b?.setPaused(paused);
     // Freezing the whole context pauses music and effects mid-note, sample-accurately.
     if (paused) void this.ctx.suspend().catch(() => {});
