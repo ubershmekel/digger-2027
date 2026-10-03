@@ -137,6 +137,37 @@ body {
   width: min(440px, 100%);
 }
 
+.panel.loading {
+  width: min(440px, 100%);
+}
+
+.panel.loading p:not(.fine) {
+  color: var(--ink-dim);
+  margin: 0 0 14px;
+}
+
+.progress-pct {
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+.progress {
+  height: 8px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+  margin-bottom: 22px;
+}
+
+.progress i {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--gold-deep), var(--gold));
+  transition: width 0.2s ease-out;
+}
+
 .panel.settings {
   width: min(980px, 100%);
   text-align: left;

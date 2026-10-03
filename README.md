@@ -154,7 +154,7 @@ Composed as code, and synthesized: no samples ship with the game.
 | Level complete | `newlevjingle` | Vibes arpeggios over lush Rhodes chords and a cymbal swell. |
 
 - **Instruments:** FM electric piano, vibraphone, upright bass, muted trumpet, strings, piano, and a drum kit (ride, hi-hat, brushes, snare, kick). All are synthesized with Web Audio (`src/audio/hd/instruments.ts`).
-- **Rendering:** each cue is bounced in an `OfflineAudioContext` when the game starts. Looping cues get their reverb tail folded back onto the start, so the loop is seamless.
+- **Rendering:** each cue is bounced when the game starts. Every distinct sound (instrument, pitch, rounded length and velocity) is synthesized once in an `OfflineAudioContext`. The notes are then mixed in plain JS, and reverb and mastering run in a single pass. That's about a tenth as many synthesized voices as notes. Looping cues get their reverb tail folded back onto the start, so the loop is seamless. The first jazz game waits for the main theme behind a progress bar, or you can skip ahead and let the music join later.
 - **Effects** are synthesized live and follow the original's pitch contours. Emerald pickups climb the original C-major scale on vibes. A falling bag gets a dropping whistle and a wobbling bag creaks. Gold goes "cha-ching". Eating monsters gulps higher with each bite. Death is a sad muted trombone.
 
 > **Decision:** the main theme is *Popcorn* (Gershon Kingsley, 1969), in a jazz arrangement, as in every Digger version. The bonus theme (Rossini) and the dirge (Chopin) are public domain. *Popcorn* is still under copyright, and an arrangement doesn't change that. That's fine for a free fan project, but it would need revisiting before any commercial release.

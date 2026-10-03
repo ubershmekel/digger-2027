@@ -27,6 +27,8 @@ export class App {
   private last = performance.now();
   private start = performance.now();
   private assisted = false;
+  /** Ends the wait for the music to render (set while waiting). */
+  private skipMusicWait: (() => void) | null = null;
   private wasInGame = false;
   private fadeEl: HTMLElement;
   /** Fire presses that must not reach the sim (cut-scenes, level start, a skipping press). */
@@ -76,6 +78,7 @@ export class App {
       submitInitials: (s) => this.submitInitials(s),
       typingInitials: (s) => this.game.showInitials(s),
       unlock: () => this.unlockAudio(),
+      skipWait: () => this.skipMusicWait?.(),
     });
 
     const app = this;
@@ -255,10 +258,26 @@ export class App {
     }
   }
 
-  private startGame(players: number, level = 1): void {
+  private async startGame(players: number, level = 1): Promise<void> {
+    if (this.skipMusicWait) return; // already waiting to start
+    await this.waitForMusic();
     this.assisted = this.settings.turnBuffer > 0 || this.settings.speed != 1;
     this.game.requestStart(players, level);
     this.ui.show(null);
+  }
+
+  /** With jazz sound, the first game waits (with a progress bar) for the theme to finish rendering. */
+  private async waitForMusic(): Promise<void> {
+    const audio = this.audio;
+    if (!audio || this.settings.audio != 'hd') return;
+    // Only show the panel if the wait is noticeable.
+    const timer = setTimeout(() => this.ui.show('loading'), 150);
+    await new Promise<void>((resolve) => {
+      this.skipMusicWait = resolve;
+      void audio.whenReady((f) => this.ui.setLoading(f)).then(resolve, resolve);
+    });
+    clearTimeout(timer);
+    this.skipMusicWait = null;
   }
 
   private pause(): void {
@@ -332,7 +351,9 @@ export class App {
         this.applyVolumes();
         break;
       case 'audio':
-        this.audio?.setMode(s.audio, this.game.sound.tune);
+        void this.audio?.setMode(s.audio, this.game.sound.tune);
+        // Switching to PC-speaker sound needs no rendering: stop waiting for it.
+        if (s.audio == 'classic') this.skipMusicWait?.();
         break;
       case 'graphics':
         this.setGraphics(s.graphics);

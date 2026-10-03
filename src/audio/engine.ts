@@ -13,6 +13,8 @@ export interface AudioBackend {
   setPaused(paused: boolean): void;
   /** Stop everything immediately (used when switching away from this backend). */
   silence(): void;
+  /** Resolves once the main music can play, reporting progress (0..1) meanwhile. */
+  whenReady?(onProgress?: (f: number) => void): Promise<void>;
 }
 
 export class AudioEngine {
@@ -24,6 +26,8 @@ export class AudioEngine {
   private mode: 'hd' | 'classic' = 'hd';
   private ready: Promise<void>;
   private hdFactory: ((engine: AudioEngine) => Promise<AudioBackend>) | null = null;
+  /** The latest mode switch, which may still be loading the HD backend. */
+  private switching: Promise<void> = Promise.resolve();
   private paused = false;
 
   constructor() {
@@ -64,7 +68,17 @@ export class AudioEngine {
     this.sfx.gain.setTargetAtTime(sfx * sfx, t, 0.02);
   }
 
-  async setMode(mode: 'hd' | 'classic', tune: number): Promise<void> {
+  setMode(mode: 'hd' | 'classic', tune: number): Promise<void> {
+    return (this.switching = this.switchMode(mode, tune));
+  }
+
+  /** Resolves once the current sound style can play its music. */
+  async whenReady(onProgress?: (f: number) => void): Promise<void> {
+    await this.switching;
+    await this.backends[this.mode]?.whenReady?.(onProgress);
+  }
+
+  private async switchMode(mode: 'hd' | 'classic', tune: number): Promise<void> {
     await this.ready;
     if (mode == 'hd' && !this.backends.hd && this.hdFactory) {
       const f = this.hdFactory;

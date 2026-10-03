@@ -46,10 +46,66 @@ function drumSample(i: Inst, sampleRate: number): Promise<AudioBuffer> {
   return p;
 }
 
-/** Renders a cue offline. Looping cues get their reverb tail folded onto the start so the loop is seamless. */
-export async function render(cue: Cue, sampleRate: number): Promise<AudioBuffer> {
+/** How finely notes are rounded so that near-identical ones share one synthesized voice. */
+const DUR_STEP = 0.02;
+const VEL_STEP = 0.1;
+/** Room after note-off for every instrument's release and ring-out. */
+const VOICE_TAIL = 2.5;
+
+interface Sample {
+  ch: [Float32Array, Float32Array];
+  /** Length with the trailing silence trimmed off. */
+  len: number;
+}
+
+function trimmed(b: AudioBuffer): Sample {
+  const ch: [Float32Array, Float32Array] = [b.getChannelData(0), b.getChannelData(1)];
+  let len = b.length;
+  // About -80 dB: well below anything audible once the mix is normalized.
+  while (len > 0 && Math.abs(ch[0][len - 1]) < 1e-4 && Math.abs(ch[1][len - 1]) < 1e-4) len--;
+  return { ch, len };
+}
+
+/** Synthesizes one melodic note on its own. */
+function renderVoice(i: Inst, d: number, m: number, v: number, pan: number | undefined, sampleRate: number): Promise<AudioBuffer> {
+  const ctx = new OfflineAudioContext(2, Math.ceil((d + VOICE_TAIL) * sampleRate), sampleRate);
+  const out = ctx.destination;
+  if (i == 'rhodes') I.rhodes(ctx, out, 0, d, m, v, pan);
+  else if (i == 'vibes') I.vibes(ctx, out, 0, d, m, v, pan);
+  else if (i == 'bass') I.bass(ctx, out, 0, d, m, v);
+  else if (i == 'trumpet') I.trumpet(ctx, out, 0, d, m, v, pan);
+  else if (i == 'strings') I.strings(ctx, out, 0, d, m, v, pan);
+  else if (i == 'piano') I.piano(ctx, out, 0, d, m, v, pan);
+  else if (i == 'swell') I.swell(ctx, out, 0, d, v);
+  return ctx.startRendering();
+}
+
+/** Mixes a sample into `dst` at sample offset `at`, resampled by `rate` (linear interpolation). */
+function mixInto(dst: Float32Array[], s: Sample, at: number, gain: number, rate = 1): void {
+  for (let c = 0; c < 2; c++) {
+    const src = s.ch[c];
+    const out = dst[c];
+    const n = Math.min(Math.floor((s.len - 1) / rate), out.length - at);
+    if (rate == 1) for (let k = 0; k < n; k++) out[at + k] += src[k] * gain;
+    else
+      for (let k = 0; k < n; k++) {
+        const x = k * rate;
+        const j = x | 0;
+        out[at + k] += (src[j] + (src[j + 1] - src[j]) * (x - j)) * gain;
+      }
+  }
+}
+
+/**
+ * Renders a cue offline. Each distinct sound (instrument, pitch, length and velocity,
+ * rounded) is synthesized once; the notes are then mixed in plain JS, and reverb and
+ * mastering run in a single pass. Looping cues get their reverb tail folded onto the
+ * start so the loop is seamless.
+ */
+export async function render(cue: Cue, sampleRate: number, onProgress?: (done: number) => void): Promise<AudioBuffer> {
+  // Progress is weighted by measured cost: voices, then mixing, then reverb and mastering.
+  const report = (stage: number, f: number) => onProgress?.([0, 0.25, 0.5][stage] + [0.25, 0.25, 0.5][stage] * f);
   const spb = 60 / cue.bpm;
-  const tail = 3;
   const music = cue.beats * spb;
   const toSec = (beat: number) => {
     const b = Math.floor(beat + 1e-6);
@@ -63,111 +119,66 @@ export async function render(cue: Cue, sampleRate: number): Promise<AudioBuffer>
   // Humanized timing for every note, fixed up front so the result is deterministic.
   const timed = cue.notes.map((n) => {
     const t = Math.max(0, toSec(n.t) + rnd() * 0.012);
-    return { n, t, d: Math.max(0.05, toSec(n.t + n.d) - toSec(n.t)), rate: 1 + rnd() * 0.04 };
+    const d = Math.max(0.05, toSec(n.t + n.d) - toSec(n.t));
+    const rate = 1 + rnd() * 0.04;
+    if (DRUMS.has(n.i)) return { n, t, rate, key: n.i, d, v: 1 };
+    const qd = Math.max(DUR_STEP, Math.round(d / DUR_STEP) * DUR_STEP);
+    const qv = Math.max(VEL_STEP, Math.round(n.v / VEL_STEP) * VEL_STEP);
+    return { n, t, rate: 1, key: [n.i, n.m, qd, qv, n.pan ?? 0].join(), d: qd, v: qv };
   });
-  const samples = new Map<Inst, AudioBuffer>();
-  for (const i of DRUMS) samples.set(i, await drumSample(i, sampleRate));
-  const ir = I.makeImpulse(new OfflineAudioContext(2, 1, sampleRate), 2.6, 2.4);
 
-  // Render in short segments: an offline context processes every scheduled node for its
-  // whole length, so one long context with thousands of notes is very slow. Each segment
-  // holds only the notes that start in it (plus room for their tails), and the segments
-  // are overlap-added.
-  const SEG = 4;
-  const nseg = Math.max(1, Math.ceil(music / SEG));
-  const total = Math.ceil((music + tail + 4) * sampleRate);
-  const mix = [new Float32Array(total), new Float32Array(total)];
-  const renderSegment = async (k: number) => {
-    const s0 = k * SEG;
-    const notes = timed.filter((x) => x.t >= s0 && (x.t < s0 + SEG || k == nseg - 1));
-    if (!notes.length) return;
-    const longest = Math.max(...notes.map((x) => x.t - s0 + x.d));
-    const len = Math.ceil((longest + tail) * sampleRate);
-    const ctx = new OfflineAudioContext(2, len, sampleRate);
-    const dry = ctx.createGain();
-    dry.connect(ctx.destination);
-    const verb = ctx.createConvolver();
-    verb.buffer = ir;
-    const send = ctx.createGain();
-    send.gain.value = cue.reverb;
-    send.connect(verb).connect(ctx.destination);
-    const buses = new Map<Inst, GainNode>();
-    const bus = (i: Inst) => {
-      let g = buses.get(i);
-      if (!g) {
-        g = ctx.createGain();
-        g.gain.value = LEVELS[i];
-        g.connect(dry);
-        // Drums and bass stay drier than the melodic instruments.
-        const wet = ctx.createGain();
-        wet.gain.value = i == 'bass' || i == 'kick' ? 0.2 : i == 'ride' || i == 'hat' ? 0.5 : 1;
-        g.connect(wet).connect(send);
-        buses.set(i, g);
-      }
-      return g;
-    };
-    for (const { n, t: at, d, rate } of notes) {
-      const t = at - s0;
-      const out = bus(n.i);
-      const sample = samples.get(n.i);
-      if (sample) {
-        const src = ctx.createBufferSource();
-        src.buffer = sample;
-        // Tiny pitch variance keeps repeated hits from sounding machine-gunned.
-        src.playbackRate.value = rate;
-        const g = ctx.createGain();
-        g.gain.value = n.v;
-        src.connect(g).connect(out);
-        src.start(t);
-        continue;
-      }
-      switch (n.i) {
-        case 'rhodes':
-          I.rhodes(ctx, out, t, d, n.m, n.v, n.pan);
-          break;
-        case 'vibes':
-          I.vibes(ctx, out, t, d, n.m, n.v, n.pan);
-          break;
-        case 'bass':
-          I.bass(ctx, out, t, d, n.m, n.v);
-          break;
-        case 'trumpet':
-          I.trumpet(ctx, out, t, d, n.m, n.v, n.pan);
-          break;
-        case 'strings':
-          I.strings(ctx, out, t, d, n.m, n.v, n.pan);
-          break;
-        case 'piano':
-          I.piano(ctx, out, t, d, n.m, n.v, n.pan);
-          break;
-        case 'swell':
-          I.swell(ctx, out, t, d, n.v);
-          break;
-      }
-    }
-    const buf = await ctx.startRendering();
-    const off = Math.round(s0 * sampleRate);
-    for (let ch = 0; ch < 2; ch++) {
-      const src = buf.getChannelData(ch);
-      const dst = mix[ch];
-      const n = Math.min(src.length, dst.length - off);
-      for (let i = 0; i < n; i++) dst[off + i] += src[i];
-    }
-  };
-  // A few at a time keeps memory flat while using spare cores.
+  // Synthesize the distinct sounds, a few at a time.
+ const samples = new Map<string, Sample>();
+  const jobs = [...new Map(timed.map((x) => [x.key, x])).values()];
   let next = 0;
+  let done = 0;
   const worker = async () => {
-    while (next < nseg) await renderSegment(next++);
+    while (next < jobs.length) {
+      const { n, key, d, v } = jobs[next++];
+      const buf = DRUMS.has(n.i) ? await drumSample(n.i, sampleRate) : await renderVoice(n.i, d, n.m, v, n.pan, sampleRate);
+      samples.set(key, trimmed(buf));
+      report(0, ++done / jobs.length);
+    }
   };
-  await Promise.all([worker(), worker(), worker()]);
+  await Promise.all([worker(), worker(), worker(), worker()]);
 
-  // Mastering pass: gentle bus compression and a softened top end.
+
+  // Mix the notes into one bus per reverb amount: drums and bass stay drier than the
+  // melodic instruments.
+  const total = Math.ceil((music + VOICE_TAIL + 4) * sampleRate);
+  const sends = [0.2, 0.5, 1];
+  const buses = sends.map(() => [new Float32Array(total), new Float32Array(total)]);
+  let lastYield = performance.now();
+  for (const [k, { n, t, rate, key, v }] of timed.entries()) {
+    const send = n.i == 'bass' || n.i == 'kick' ? 0 : n.i == 'ride' || n.i == 'hat' ? 1 : 2;
+    // Drums are rendered at full velocity; voices at a rounded one, so scale to the exact level.
+    mixInto(buses[send], samples.get(key)!, Math.round(t * sampleRate), LEVELS[n.i] * (n.v / v), rate);
+    // This runs on the main thread, possibly mid-game: never hold it for more than a few ms.
+    if (performance.now() - lastYield > 4) {
+      report(1, k / timed.length);
+      await new Promise((r) => setTimeout(r));
+      lastYield = performance.now();
+    }
+  }
+
+  // Reverb and mastering in one pass: gentle bus compression and a softened top end.
   const master = new OfflineAudioContext(2, total, sampleRate);
-  const raw = master.createBuffer(2, total, sampleRate);
-  raw.copyToChannel(mix[0], 0);
-  raw.copyToChannel(mix[1], 1);
-  const src = master.createBufferSource();
-  src.buffer = raw;
+  const out = master.createGain();
+  const verb = master.createConvolver();
+  verb.buffer = I.makeImpulse(master, 2.6, 2.4);
+  verb.connect(out);
+  buses.forEach((mix, k) => {
+    const raw = master.createBuffer(2, total, sampleRate);
+    raw.copyToChannel(mix[0], 0);
+    raw.copyToChannel(mix[1], 1);
+    const src = master.createBufferSource();
+    src.buffer = raw;
+    src.connect(out);
+    const wet = master.createGain();
+    wet.gain.value = sends[k] * cue.reverb;
+    src.connect(wet).connect(verb);
+    src.start();
+  });
   const comp = master.createDynamicsCompressor();
   comp.threshold.value = -16;
   comp.ratio.value = 2.5;
@@ -177,20 +188,30 @@ export async function render(cue: Cue, sampleRate: number): Promise<AudioBuffer>
   warmth.type = 'highshelf';
   warmth.frequency.value = 9000;
   warmth.gain.value = -3;
-  src.connect(comp).connect(warmth).connect(master.destination);
-  src.start();
+  out.connect(comp).connect(warmth).connect(master.destination);
+  // Firefox can't suspend an offline render; there the bar just jumps at the end.
+  if (onProgress && typeof master.suspend == 'function') {
+    // Pause the render every couple of seconds of audio, just to report how far it got.
+    const secs = total / sampleRate;
+    for (let at = 2; at < secs; at += 2)
+      void master.suspend(at).then(() => {
+        report(2, at / secs);
+        void master.resume();
+      });
+  }
   const buf = await master.startRendering();
+  report(2, 1);
   normalize(buf, 0.16, 0.85);
   if (!cue.loopBeats) return buf;
   const loopLen = Math.round(cue.loopBeats * spb * sampleRate);
-  const out = new AudioBuffer({ length: loopLen, numberOfChannels: 2, sampleRate });
+  const loop = new AudioBuffer({ length: loopLen, numberOfChannels: 2, sampleRate });
   for (let ch = 0; ch < 2; ch++) {
     const s = buf.getChannelData(ch);
-    const dst = out.getChannelData(ch);
+    const dst = loop.getChannelData(ch);
     dst.set(s.subarray(0, loopLen));
     for (let i = loopLen; i < s.length; i++) dst[(i - loopLen) % loopLen] += s[i];
   }
-  return out;
+  return loop;
 }
 
 /** Scales a buffer toward a target RMS without letting peaks exceed `peak`. */
@@ -239,6 +260,8 @@ class Jazz implements AudioBackend {
   private sfx: GainNode;
   private buffers = new Map<CueId, AudioBuffer>();
   private pending = new Map<CueId, Promise<AudioBuffer>>();
+  private mainProgress = 0;
+  private onMainProgress: ((f: number) => void) | null = null;
   private playing: Playing | null = null;
   private wanted: CueId | null = null;
   private falling: { stop(): void } | null = null;
@@ -275,7 +298,14 @@ class Jazz implements AudioBackend {
   private load(id: CueId, make: () => Cue): Promise<AudioBuffer> {
     let p = this.pending.get(id);
     if (!p) {
-      p = render(make(), this.ctx.sampleRate).then((b) => {
+      const progress =
+        id == 'main'
+          ? (f: number) => {
+              this.mainProgress = f;
+              this.onMainProgress?.(f);
+            }
+          : undefined;
+      p = render(make(), this.ctx.sampleRate, progress).then((b) => {
         this.buffers.set(id, b);
         if (this.wanted == id && this.playing?.id != id) this.start(id);
         return b;
@@ -283,6 +313,16 @@ class Jazz implements AudioBackend {
       this.pending.set(id, p);
     }
     return p;
+  }
+
+  async whenReady(onProgress?: (f: number) => void): Promise<void> {
+    onProgress?.(this.mainProgress);
+    this.onMainProgress = onProgress ?? null;
+    try {
+      await this.load('main', mainTheme);
+    } finally {
+      this.onMainProgress = null;
+    }
   }
 
   private start(id: CueId, pos = 0): void {

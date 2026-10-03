@@ -2,7 +2,7 @@
 import { DEFAULT_KEYS, type BindAction, type Settings } from '../storage/storage';
 import type { HighScore } from '../storage/storage';
 
-export type Screen = 'boot' | 'menu' | 'settings' | 'pause' | 'scores' | 'help' | 'initials' | null;
+export type Screen = 'boot' | 'menu' | 'loading' | 'settings' | 'pause' | 'scores' | 'help' | 'initials' | null;
 
 export interface UiCallbacks {
   start(players: number, level: number): void;
@@ -18,6 +18,8 @@ export interface UiCallbacks {
   submitInitials(s: string): void;
   typingInitials(s: string): void;
   unlock(): void;
+  /** Start the game without waiting for the music to finish rendering. */
+  skipWait(): void;
 }
 
 const h = (html: string) => {
@@ -140,6 +142,19 @@ export class Ui {
     for (let i = 0; i < Math.max(0, p.lives - 1); i++) lives.appendChild(h(`<i class="life"></i>`));
   }
 
+  private loadingProgress = 0;
+
+  /** Updates the music-rendering progress bar (0..1). */
+  setLoading(f: number): void {
+    this.loadingProgress = f;
+    const pct = Math.round(f * 100);
+    const bar = this.panel.querySelector<HTMLElement>('.progress');
+    if (!bar) return;
+    bar.setAttribute('aria-valuenow', String(pct));
+    bar.querySelector<HTMLElement>('i')!.style.width = `${pct}%`;
+    this.panel.querySelector('.progress-pct')!.textContent = `${pct}%`;
+  }
+
   // --- Screens ---------------------------------------------------------------
 
   show(screen: Screen): void {
@@ -164,6 +179,9 @@ export class Ui {
         break;
       case 'pause':
         this.cb.resume();
+        break;
+      case 'loading':
+        this.cb.skipWait();
         break;
     }
   }
@@ -221,6 +239,18 @@ export class Ui {
             el.querySelector('.lvl-num')!.textContent = String(this.startLevel);
           }
         });
+        return el;
+      }
+      case 'loading': {
+        const el = h(`<div class="panel loading">
+          <h2>Tuning up the band</h2>
+          <p>Rendering the jazz soundtrack <span class="progress-pct">0%</span></p>
+          <div class="progress" role="progressbar" aria-label="Rendering music" aria-valuemin="0" aria-valuemax="100"><i></i></div>
+          <nav class="buttons row"><button data-a="skip">Play now, music joins later</button></nav>
+          <p class="fine">Once per visit · F4 for PC-speaker sound</p>
+        </div>`);
+        el.querySelector('[data-a=skip]')!.addEventListener('click', () => this.cb.skipWait());
+        queueMicrotask(() => this.setLoading(this.loadingProgress));
         return el;
       }
       case 'pause': {
