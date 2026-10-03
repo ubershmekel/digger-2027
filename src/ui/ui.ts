@@ -143,7 +143,8 @@ export class Ui {
   // --- Screens ---------------------------------------------------------------
 
   show(screen: Screen): void {
-    if (screen == 'settings' || screen == 'scores' || screen == 'help') this.returnTo = this.screen;
+    // Re-showing the same screen (e.g. refreshing Settings after F2) must keep where Back goes.
+    if ((screen == 'settings' || screen == 'scores' || screen == 'help') && screen != this.screen) this.returnTo = this.screen;
     this.screen = screen;
     this.panel.innerHTML = '';
     this.panel.hidden = screen == null;
