@@ -5,6 +5,8 @@ export default defineConfig({
   testDir: 'tests/e2e',
   timeout: 180_000,
   retries: process.env.CI ? 1 : 0,
+  // On CI, failures show up as annotations on the run.
+  reporter: process.env.CI ? [['github'], ['list']] : 'list',
   use: { baseURL: 'http://localhost:4173/', viewport: { width: 1280, height: 720 } },
   webServer: { command: 'npx vite preview --port 4173 --strictPort', port: 4173, reuseExistingServer: !process.env.CI },
   projects: [
