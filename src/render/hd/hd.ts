@@ -1026,8 +1026,11 @@ export class HdRenderer implements Renderer {
     // The HUD needs ~70 px above the grass; on short landscape phones that is a lot of world.
     const worldPerPx = (2 * fit(top) * Math.tan(fov / 2)) / viewH;
     top += Math.max(0, 74 * worldPerPx - (wy(0) - wy(14) + 1.4));
-    const cy = (top + bottom) / 2;
     const dist = fit(top);
+    // On tall screens the width sets the distance: keep the playfield at the top, where the
+    // 1983 screen sits, and leave the spare height below it for the thumbs.
+    const halfH = dist * Math.tan(fov / 2);
+    const cy = Math.min((top + bottom) / 2, top - halfH + (20 * 2 * halfH) / viewH);
     const tilt = THREE.MathUtils.degToRad(7);
     let tx = 0;
     let ty = cy;

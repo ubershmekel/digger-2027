@@ -1349,6 +1349,14 @@ a.button:focus-visible {
 @media (orientation: portrait) {
   .rotate-hint {
     display: block;
+    animation: rotate-hint-out 0.8s ease 10s forwards;
+  }
+}
+
+@keyframes rotate-hint-out {
+  to {
+    opacity: 0;
+    visibility: hidden;
   }
 }
 
