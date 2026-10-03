@@ -129,13 +129,30 @@ export class Ui {
   /** The corner switch between the 2027 and 1983 presentations, labelled with the current one. */
   updateEra(on: boolean): void {
     this.eraEl.hidden = !on;
-    const era = this.settings.graphics == 'hd' ? '2027' : '1983';
-    if (this.eraEl.dataset.era == era) return;
-    this.eraEl.dataset.era = era;
-    this.eraEl.textContent = era;
-    const other = era == '2027' ? '1983: classic graphics and PC-speaker sound' : '2027: 3D graphics and jazz';
-    this.eraEl.title = `Switch to ${other}`;
-    this.eraEl.setAttribute('aria-label', `${era}. Switch to ${other}`);
+    const era = this.era();
+    if (this.eraEl.dataset.era != era) {
+      this.eraEl.dataset.era = era;
+      this.eraEl.textContent = era;
+      const other = era == '2027' ? '1983: classic graphics and PC-speaker sound' : '2027: 3D graphics and jazz';
+      this.eraEl.title = `Switch to ${other}`;
+      this.eraEl.setAttribute('aria-label', `${era}. Switch to ${other}`);
+    }
+    // The big one on the first screen.
+    const boot = this.panel.querySelector<HTMLElement>('.era-boot');
+    if (boot && boot.dataset.era != era) {
+      boot.dataset.era = era;
+      boot.innerHTML = this.eraBootLabel();
+    }
+  }
+
+  private era(): '2027' | '1983' {
+    return this.settings.graphics == 'hd' ? '2027' : '1983';
+  }
+
+  private eraBootLabel(): string {
+    return this.era() == '2027'
+      ? `<b>2027</b><small>3D graphics and jazz · switch to 1983</small>`
+      : `<b>1983</b><small>CGA and PC speaker · switch to 2027</small>`;
   }
 
   // --- HUD ------------------------------------------------------------------
@@ -218,6 +235,7 @@ export class Ui {
         const el = h(`<div class="panel boot">
           <h1 class="logo">DIGGER<span>2027</span></h1>
           <button class="primary big" autofocus>Press any key to begin</button>
+          <button class="era-boot" tabindex="-1" data-era="${this.era()}">${this.eraBootLabel()}</button>
           <p class="fine">A fan-made, modern version of the original 1983 Digger by Windmill Software</p>
         </div>`);
         const go = () => {
@@ -233,6 +251,10 @@ export class Ui {
         };
         addEventListener('keydown', key, true);
         el.querySelector('button')!.addEventListener('click', go);
+        el.querySelector('.era-boot')!.addEventListener('click', () => {
+          this.cb.toggleEra();
+          el.querySelector<HTMLElement>('button')!.focus();
+        });
         return el;
       }
       case 'menu': {
