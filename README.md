@@ -40,6 +40,7 @@ npm run dev
 - `npm run lint` runs [oxlint](https://oxc.rs/). TypeScript 7's native compiler has no JS API, so typescript-eslint can't run.
 - `npm run build` makes a static build in `dist/`.
 - `npm run e2e` runs Playwright smoke tests against the build in Chromium, Firefox and WebKit.
+- `npm run music` re-renders all three 2027 tracks into `public/audio/` (needs `ffmpeg` with `libopus`; it takes a few seconds).
 
 Every push to `main` runs all of these in CI and then deploys to GitHub Pages (`.github/workflows/deploy.yml`). The built site works offline after the first visit, via a service worker.
 
@@ -154,6 +155,24 @@ Composed as code, and synthesized: no samples ship with the game.
 | Level complete | `newlevjingle` | Vibes arpeggios over lush Rhodes chords and a cymbal swell. |
 
 - **Instruments:** FM electric piano, vibraphone, upright bass, muted trumpet, strings, piano, and a drum kit (ride, hi-hat, brushes, snare, kick). All are synthesized with Web Audio (`src/audio/hd/instruments.ts`).
+### The 2027 tracks
+
+The 2027 theme is not synthesized in the browser. `npm run music` renders three readings
+of the 1983 tune offline into `public/audio/`, each one the melody note for note with its
+own bass line and beat:
+
+| Track | Tempo | What it is |
+|---|---|---|
+| `digger-2027.opus` | 126 | Club mix: supersaw lead, the riff an octave down, four on the floor, open hats on the off-beats, a breakdown and a riser. |
+| `digger-breaks.opus` | 174 | Drum and bass: the tune over a two-step break with ghost snares, the riff in a reese bass. |
+| `digger-acid.opus` | 130 | Acid: the melody as one squelchy 303 line, root pedal underneath, drum machine on the floor. |
+
+`tools/music/` does the synthesis itself: band-limited oscillators, per-sample filter
+envelopes, layered drums, a room, a three-sixteenth delay throw, a low end side-chained
+to the kick, and a limited master. Offline there is no realtime budget, which is the
+whole point. The game plays those files, and falls back to synthesizing the same cue in
+the browser if a file will not decode, so browsers without Opus still get music.
+
 - **Rendering:** each cue is bounced when the game starts. Every distinct sound (instrument, pitch, rounded length and velocity) is synthesized once in an `OfflineAudioContext`. The notes are then mixed in plain JS, and reverb and mastering run in a single pass. That's about a tenth as many synthesized voices as notes. Looping cues get their reverb tail folded back onto the start, so the loop is seamless. The first jazz game waits for the main theme behind a progress bar, or you can skip ahead and let the music join later.
 - **Effects** are synthesized live and follow the original's pitch contours. Emerald pickups climb the original C-major scale on vibes. A falling bag gets a dropping whistle and a wobbling bag creaks. Gold goes "cha-ching". Eating monsters gulps higher with each bite. Death is a sad muted trombone.
 

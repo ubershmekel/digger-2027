@@ -1,5 +1,6 @@
 // Persistent settings and high scores in localStorage. Every access is guarded:
 // private browsing or blocked storage just means nothing persists.
+import { sanitizeName } from '../name';
 
 function read<T>(key: string): T | null {
   try {
@@ -34,9 +35,15 @@ export const DEFAULT_KEYS: Record<BindAction, string[]> = {
   pause: ['Escape', 'KeyP', 'Pause'],
 };
 
+/** How the remastered soundtrack plays the main tune: the 2027 band reading it
+ *  straight, or the swing trio. The PC-speaker style always plays the 1983 tables. */
+/** The readings of the main theme: two rendered dance tracks, an acid take and the jazz trio. */
+export type MusicTheme = '2027' | 'breaks' | 'acid' | 'jazz';
+
 export interface Settings {
   graphics: 'hd' | 'classic';
   audio: 'hd' | 'classic';
+  musicTheme: MusicTheme;
   crt: boolean;
   /** 'auto' picks a level from measured frame times. */
   quality: Quality | 'auto';
@@ -60,6 +67,7 @@ export interface Settings {
 export const DEFAULT_SETTINGS: Settings = {
   graphics: 'hd',
   audio: 'hd',
+  musicTheme: '2027',
   crt: true,
   quality: 'auto',
   masterVolume: 0.8,
@@ -107,7 +115,7 @@ export function recordLevel(level: number): void {
 // --- High scores --------------------------------------------------------------
 
 export interface HighScore {
-  initials: string;
+  name: string;
   score: number;
   date?: string;
 }
@@ -116,16 +124,27 @@ const SCORES_KEY = 'digger2027.highscores.v1';
 const LEGACY_KEY = 'ds';
 const TABLE_SIZE = 10;
 
+/** Older builds saved three-letter initials; they load as names. */
+interface StoredScore {
+  name?: string;
+  initials?: string;
+  score?: number;
+  date?: string;
+}
+
 export class HighScores {
   private table: HighScore[];
 
   constructor() {
-    this.table = read<HighScore[]>(SCORES_KEY) ?? this.importLegacy();
-    this.table = this.table.filter((e) => e && typeof e.score == 'number').slice(0, TABLE_SIZE);
+    const raw = read<StoredScore[]>(SCORES_KEY) ?? this.importLegacy();
+    this.table = raw
+      .filter((e) => e && typeof e.score == 'number')
+      .map((e) => ({ name: sanitizeName(e.name ?? e.initials ?? '...') || '...', score: e.score as number, date: e.date }))
+      .slice(0, TABLE_SIZE);
   }
 
   /** The old JS port stored ten space-separated scores under "ds". */
-  private importLegacy(): HighScore[] {
+  private importLegacy(): StoredScore[] {
     try {
       const ds = localStorage.getItem(LEGACY_KEY);
       if (!ds) return [];
@@ -134,7 +153,7 @@ export class HighScores {
         .map((s) => parseInt(s, 10))
         .filter((n) => n > 0)
         .sort((a, b) => b - a);
-      const table = scores.map((score) => ({ initials: '...', score }));
+      const table = scores.map((score) => ({ name: '...', score }));
       write(SCORES_KEY, table);
       return table;
     } catch {

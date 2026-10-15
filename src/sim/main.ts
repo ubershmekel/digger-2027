@@ -24,6 +24,8 @@ export class Main {
   curplayer = 0;
   nplayers = 1;
   penalty = 0;
+  /** Ticks since the room started, for the monster pace gate. */
+  private monClock = 0;
   levnotdrawn = false;
   flashplayer = false;
   randv: number;
@@ -43,7 +45,10 @@ export class Main {
 
   checklevdone(): void {
     const { g } = this;
-    this.gamedat[this.curplayer].levdone = (g.digger.countem() == 0 || g.monster.monleft() == 0) && g.digger.digonscr;
+    /* A room with a Warden in it (or one still to come) is only over when it is down. */
+    const warden = g.monster.boss.pending || g.monster.boss.active;
+    this.gamedat[this.curplayer].levdone =
+      (g.digger.countem() == 0 || g.monster.monleft() == 0) && g.digger.digonscr && !warden;
   }
 
   cleartopline(): void {
@@ -242,10 +247,27 @@ export class Main {
     const { g } = this;
     this.penalty = 0;
     g.digger.dodigger();
-    g.monster.domonsters();
+    /* Monster step gate: see monsterPace(). A charging Warden ignores it. */
+    this.monClock++;
+    const pace = this.monsterPace();
+    if (pace <= 1 || this.monClock % pace == 0 || g.monster.bossCharging()) g.monster.domonsters();
     g.bags.dobags();
     if (this.penalty > 8) g.monster.incmont(this.penalty - 8);
     this.checklevdone();
+  }
+
+  /**
+   * Ticks between monster steps. The original moved every monster on every tick;
+   * here the opening rooms run a slower cadence so a first game is survivable, and
+   * the schedule closes on the original speed by the time the first Warden appears.
+   * @returns ticks per monster step, 1 meaning the original cadence.
+   */
+  monsterPace(): number {
+    const l = this.levno();
+    if (l <= 1) return 4;
+    if (l <= 3) return 3;
+    if (l <= 6) return 2;
+    return 1;
   }
 
   *play(): Generator<number> {
@@ -364,11 +386,11 @@ export class Main {
       d.outtext('PLAYER ' + (this.curplayer + 1), 108, 0, 2);
       d.outtext(' NEW HIGH SCORE ', 64, 40, 2);
       d.outtext('ENTER YOUR', 100, 70, 3);
-      d.outtext(' INITIALS', 100, 90, 3);
-      d.outtext('_ _ _', 128, 130, 3);
+      d.outtext('   NAME', 100, 90, 3);
       g.sound.killsound();
       g.scene = 'initials';
       g.pendingInitials = { player: this.curplayer, score };
+      g.showInitials('');
       while (g.pendingInitials) yield 50;
       g.pc.gclear();
       g.pc.ginten(0);

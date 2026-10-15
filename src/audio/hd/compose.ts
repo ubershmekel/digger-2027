@@ -2,7 +2,29 @@
 // the 1983 note tables; the harmony, bass lines, comping and drums are arranged here.
 import { BACKG_JINGLE, BONUS_JINGLE, DIRGE, NEWLEV_JINGLE, PIT_HZ } from '../tunes';
 
-export type Inst = 'rhodes' | 'vibes' | 'bass' | 'trumpet' | 'strings' | 'piano' | 'ride' | 'hat' | 'brush' | 'swish' | 'snare' | 'kick' | 'swell';
+export type Inst =
+  | 'rhodes'
+  | 'vibes'
+  | 'bass'
+  | 'trumpet'
+  | 'strings'
+  | 'piano'
+  | 'lead'
+  | 'synthbass'
+  | 'reese'
+  | 'acid'
+  | 'stab'
+  | 'ride'
+  | 'hat'
+  | 'openhat'
+  | 'brush'
+  | 'swish'
+  | 'snare'
+  | 'snare2'
+  | 'kick'
+  | 'kick2'
+  | 'clap'
+  | 'swell';
 
 export interface Note {
   /** Start in beats. */
@@ -219,11 +241,250 @@ function melody(t: readonly number[], beatsPerUnit: number, inst: Inst, transpos
     .map(([at, len, m]) => ({ t: at * beatsPerUnit, d: len * beatsPerUnit * legato, m: m + transpose, v: vel * (0.88 + r() * 0.18), i: inst, pan }));
 }
 
+
+
+/** Keeps a riff-shaped bass low by dropping anything above `limit` an octave. */
+function foldDown(notes: Note[], limit: number): Note[] {
+  return notes.map((n) => (n.m > limit ? { ...n, m: n.m - 12 } : n));
+}
+
 function shift(notes: Note[], beats: number): Note[] {
   return notes.map((n) => ({ ...n, t: n.t + beats }));
 }
 
+/** Moves a phrase later, optionally transposing it or putting it on another instrument. */
+function moved(notes: Note[], at: number, extra = 0, inst?: Inst): Note[] {
+  return notes.map((n) => ({ ...n, t: n.t + at, m: n.m + extra, ...(inst ? { i: inst } : {}) }));
+}
+
+/** The notes of a phrase that start inside `[from, to)`. */
+function inRange(notes: Note[], from: number, to: number): Note[] {
+  return notes.filter((n) => n.t >= from && n.t < to);
+}
+
 // --- Cues -------------------------------------------------------------------------
+
+/**
+ * Popcorn as a dance track. The melody is the 1983 table, note for note, but it is
+ * arranged the way a 12-inch would be: four bars of intro building on the kick, an
+ * eight-bar drop with the tune on a pulse lead over a pumping riff bass and a
+ * four-on-the-floor beat, a two-bar break, then eight bars where the melody lifts an
+ * octave on Rhodes with a counter-line. 126 bpm, so it sits where club music sits.
+ */
+export function mainTheme2027(): Cue {
+  const r = rng(1983);
+  const ch = chart(
+    `Dm9 | Dm9 | Dm9 | C9 | Dm9 | Dm9 | Dm9 | Fmaj9 |
+     Fmaj9 | Fmaj9 | Am9 | G9 | Fmaj9 | Fmaj9 | Am9 | G9 |
+     Dm9 | Fmaj9 | Am9 | G9`,
+  );
+  for (const c of ch) if (!QUALITIES[c.q]) c.q = c.q.startsWith('m') ? 'm9' : 'maj9';
+
+  const introBars = 2;
+  const outroBars = 2;
+  const tuneBars = 20; // the 1983 tune, one pass
+  const bars = introBars + tuneBars + outroBars;
+  const beats = bars * 4;
+  const T0 = introBars * 4; // the tune starts here, in beats
+  const BREAK: [number, number] = [8, 10]; // tune bars where the kick drops out
+  const notes: Note[] = [];
+
+  // The 1983 single voice, split back into registers: the tune up top, the same line
+  // below as the riff. Keeping both is what makes it the Digger tune rather than a
+  // dance track that happens to be in D minor.
+  const tune = melody(BACKG_JINGLE, 0.25, 'lead', 0, 0.95, r, 0.62, 0);
+  const riff = foldDown(melody(BACKG_JINGLE, 0.25, 'synthbass', -12, 0.95, r, 0.5, 0), 50);
+
+  // --- Intro: pad, rising sweep, and a kick-and-hat build in the last bar ------
+  notes.push({ t: 0, d: introBars * 4, m: 0, v: 0.7, i: 'swell' });
+  for (let b = 0; b < introBars; b++) {
+    for (const m of voicing(ch[b % ch.length], 60)) notes.push({ t: b * 4, d: 4, m, v: 0.34, i: 'strings', pan: -0.15 });
+    for (let k = 0; k < 4; k++) {
+      const t = b * 4 + k;
+      if (b == introBars - 1 || k % 2 == 0) notes.push({ t, d: 0.25, m: 0, v: b ? 0.9 : 0.6, i: 'kick' });
+      notes.push({ t, d: 0.25, m: 0, v: 0.3, i: 'hat' });
+      notes.push({ t: t + 0.5, d: 0.25, m: 0, v: 0.2, i: 'hat' });
+    }
+    if (b == introBars - 1) for (let k = 0; k < 8; k++) notes.push({ t: b * 4 + 2 + k * 0.25, d: 0.2, m: 0, v: 0.2 + k * 0.05, i: 'snare' });
+  }
+
+  // --- The tune, over the riff and the beat ------------------------------------
+  notes.push(...moved(tune, T0));
+  // Second half doubled an octave up on Rhodes: the lift a 12-inch would have.
+  const half = T0 + 40;
+  notes.push(...moved(inRange(tune, half - T0, T0 + 80 - T0), 0, 12, 'rhodes').map((n) => ({ ...n, t: n.t + T0, v: n.v * 0.42, pan: -0.3 })));
+  // A sparkle on the long notes, up top.
+  notes.push(...inRange(tune, 0, 80).filter((n) => n.d >= 0.5).map((n) => ({ ...n, t: n.t + T0 + 0.5, m: n.m + 24, i: 'vibes' as Inst, v: 0.12, pan: 0.32, d: 0.25 })));
+  /** True inside the breakdown, where the floor drops away to set up the second drop. */
+  const inBreak = (t: number) => t >= T0 + BREAK[0] * 4 && t < T0 + BREAK[1] * 4;
+  notes.push(...moved(riff, T0).map((n) => (inBreak(n.t) ? { ...n, v: n.v * 0.4 } : n)));
+  // Off-beat octave stabs under the riff: the push that makes it dance.
+  notes.push(...moved(riff, T0).filter((n) => n.t % 1 == 0.5 && !inBreak(n.t)).map((n) => ({ ...n, m: n.m + 12, v: n.v * 0.42, d: 0.2 })));
+  for (let b = 0; b < tuneBars; b++) {
+    // The pad sits out the first bar of the breakdown, which is what makes the
+    // return at the drop audible.
+    if (b == BREAK[0]) continue;
+    for (const m of voicing(ch[b % ch.length], 59)) notes.push({ t: T0 + b * 4, d: 3.6, m, v: 0.24, i: 'strings', pan: -0.1 });
+  }
+
+  // --- The beat: four on the floor, clap and snare on 2 and 4, hats in sixteenths ---
+  for (let b = 0; b < tuneBars; b++) {
+    const breaking = b >= BREAK[0] && b < BREAK[1];
+    const rolling = b >= 12; // the last stretch runs sixteenth hats for the lift
+    for (let k = 0; k < 4; k++) {
+      const t = T0 + b * 4 + k;
+      if (!breaking) notes.push({ t, d: 0.25, m: 0, v: 0.95 * (k == 0 ? 1 : 0.85), i: 'kick' });
+      if (breaking || k % 2 == 1) {
+        notes.push({ t, d: 0.25, m: 0, v: breaking ? 0.8 : 0.72, i: 'snare' });
+        notes.push({ t, d: 0.25, m: 0, v: 0.58, i: 'clap' });
+      }
+      notes.push({ t, d: 0.25, m: 0, v: 0.4, i: 'hat' });
+      // The off-beat pulse: open on the "and" of every beat, which is what makes a
+      // house track move rather than march.
+      notes.push({ t: t + 0.5, d: 0.25, m: 0, v: breaking ? 0.26 : 0.46, i: breaking ? 'hat' : 'openhat' });
+      if (rolling) for (const o of [0.25, 0.75]) notes.push({ t: t + o, d: 0.2, m: 0, v: 0.17, i: 'hat' });
+      if (k == 3) notes.push({ t: t + 0.5, d: 0.25, m: 0, v: 0.34, i: 'swish' });
+    }
+    if ((b + 1) % 8 == 0) for (let k = 0; k < 8; k++) notes.push({ t: T0 + b * 4 + 2 + k * 0.25, d: 0.2, m: 0, v: 0.22 + k * 0.05, i: 'snare' });
+  }
+  for (let k = 0; k < 8; k++) notes.push({ t: T0 + BREAK[0] * 4 - 2 + k * 0.25, d: 0.2, m: 0, v: 0.22 + k * 0.06, i: 'snare' });
+  // A riser over the last bar of the breakdown, so the drop lands on the tune again.
+  notes.push({ t: T0 + (BREAK[1] - 1) * 4, d: 4, m: 0, v: 0.55, i: 'swell' });
+
+  // --- Outro: pad and kick, then round again -----------------------------------
+  const O0 = T0 + 80;
+  for (let b = 0; b < outroBars; b++) {
+    for (const m of voicing(ch[(b + 2) % ch.length], 58)) notes.push({ t: O0 + b * 4, d: 4, m, v: 0.32, i: 'strings', pan: 0.1 });
+    notes.push({ t: O0 + b * 4, d: 0.25, m: 0, v: 0.85, i: 'kick' });
+    notes.push({ t: O0 + b * 4 + 2, d: 0.25, m: 0, v: 0.7, i: 'kick' });
+  }
+  notes.push({ t: O0 + 4, d: 3, m: 0, v: 0.5, i: 'swish' });
+
+  const trimmed = notes.filter((n) => n.t < beats - 0.001).map((n) => ({ ...n, d: Math.min(n.d, beats - n.t) }));
+  return { bpm: 126, loopBeats: beats, beats, swing: 0.5, notes: trimmed, reverb: 0.2 };
+}
+
+/** The chart the 2027 readings share: D minor, and the same twenty bars of harmony. */
+const DANCE_CHART = `Dm9 | Dm9 | Dm9 | C9 | Dm9 | Dm9 | Dm9 | Fmaj9 |
+  Fmaj9 | Fmaj9 | Am9 | G9 | Fmaj9 | Fmaj9 | Am9 | G9 |
+  Dm9 | Fmaj9 | Am9 | G9`;
+
+/**
+ * The same tune as a drum-and-bass roller. The melody sits on top, the riff drops into
+ * a reese bass, and a two-step break carries it — kick on the one, snare on two and
+ * four, ghost notes between. 174 bpm, so a bar is under a second and a half.
+ */
+export function mainThemeBreaks(): Cue {
+  const r = rng(1740);
+  const ch = chart(DANCE_CHART);
+  for (const c of ch) if (!QUALITIES[c.q]) c.q = c.q.startsWith('m') ? 'm9' : 'maj9';
+
+  const introBars = 2;
+  const outroBars = 2;
+  const tuneBars = 20;
+  const bars = introBars + tuneBars + outroBars;
+  const beats = bars * 4;
+  const T0 = introBars * 4;
+  const notes: Note[] = [];
+  const tune = melody(BACKG_JINGLE, 0.25, 'lead', 0, 0.9, r, 0.7, 0);
+  const riff = foldDown(melody(BACKG_JINGLE, 0.25, 'reese', -12, 0.95, r, 0.62, 0), 46);
+
+  /** The break: two-step, with the ghost notes that make it roll rather than march. */
+  const breakbeat = (b: number, at: number, heavy: boolean) => {
+    const n = (t: number, i: Inst, v: number) => notes.push({ t, d: 0.25, m: 0, v, i });
+    n(at, 'kick2', heavy ? 1 : 0.8);
+    if (heavy || b % 2) n(at + 2.5, 'kick2', 0.62);
+    n(at + 1, 'snare2', heavy ? 0.95 : 0.72);
+    n(at + 3, 'snare2', heavy ? 0.9 : 0.68);
+    n(at + 0.75, 'snare2', 0.16);
+    n(at + 3.5, 'snare2', 0.2);
+    for (const o of [0.5, 1.5, 2.5, 3.5]) n(at + o, 'hat', 0.3);
+    if (heavy) for (const o of [0.25, 0.75, 1.25, 1.75, 2.25, 2.75, 3.25]) n(at + o, 'hat', 0.15);
+    if ((b + 1) % 8 == 0) for (let k = 0; k < 8; k++) n(at + 3 + k * 0.125, 'snare2', 0.2 + k * 0.05);
+  };
+
+  // Intro: the break on its own, then the pad and a riser under the last bar.
+  for (let b = 0; b < introBars; b++) {
+    breakbeat(b, b * 4, false);
+    for (const m of voicing(ch[b % ch.length], 58)) notes.push({ t: b * 4, d: 4, m, v: 0.3, i: 'strings', pan: -0.15 });
+  }
+  notes.push({ t: (introBars - 1) * 4, d: 4, m: 0, v: 0.6, i: 'swell' });
+
+  // Drop one: the tune over the break and the reese riff.
+  notes.push(...moved(tune, T0));
+  notes.push(...moved(riff, T0));
+  for (let b = 0; b < tuneBars; b++) {
+    breakbeat(b, T0 + b * 4, b >= 8);
+    for (const m of voicing(ch[b % ch.length], 60)) notes.push({ t: T0 + b * 4, d: 3.8, m, v: 0.2, i: 'strings', pan: -0.1 });
+  }
+  // The second drop answers the tune an octave up, which is the lift a roller wants.
+  notes.push(...inRange(tune, 40, 80).map((n) => ({ ...n, t: n.t + T0, m: n.m + 12, i: 'vibes' as Inst, v: n.v * 0.2, pan: 0.35, d: 0.25 })));
+  notes.push({ t: T0 + 40, d: 4, m: 0, v: 0.5, i: 'swell' });
+  notes.push({ t: T0 + 8 * 4, d: 0.5, m: 0, v: 0.7, i: 'swish' });
+
+  // Outro: the break thins out, the pad holds, and the loop turns over.
+  const O0 = T0 + 80;
+  for (let b = 0; b < outroBars; b++) {
+    breakbeat(b + tuneBars, O0 + b * 4, false);
+    for (const m of voicing(ch[(b + 3) % ch.length], 58)) notes.push({ t: O0 + b * 4, d: 4, m, v: 0.3, i: 'strings', pan: 0.1 });
+  }
+
+  const trimmed = notes.filter((n) => n.t < beats - 0.001).map((n) => ({ ...n, d: Math.min(n.d, beats - n.t) }));
+  return { bpm: 174, loopBeats: beats, beats, swing: 0.5, notes: trimmed, reverb: 0.22 };
+}
+
+/**
+ * The same tune as acid: one squelchy line of sixteenths on the melody, a root pedal
+ * underneath, and a drum machine keeping four on the floor. 130 bpm, which is where
+ * the 303 sits best.
+ */
+export function mainThemeAcid(): Cue {
+  const r = rng(303);
+  const ch = chart(DANCE_CHART);
+  for (const c of ch) if (!QUALITIES[c.q]) c.q = c.q.startsWith('m') ? 'm9' : 'maj9';
+
+  const introBars = 2;
+  const outroBars = 2;
+  const tuneBars = 20;
+  const bars = introBars + tuneBars + outroBars;
+  const beats = bars * 4;
+  const T0 = introBars * 4;
+  const notes: Note[] = [];
+  // The acid line is the melody itself; the pedal and the pad carry the harmony.
+  const acid = melody(BACKG_JINGLE, 0.25, 'acid', 0, 0.95, r, 0.72, 0);
+
+  for (let b = 0; b < bars; b++) {
+    const at = b * 4;
+    const inTune = b >= introBars && b < introBars + tuneBars;
+    const tuneBar = b - introBars;
+    const root = nearest(ch[(inTune ? tuneBar : 0) % ch.length].root, 40) - 12;
+    // Four on the floor, with the clap on two and four: the drum machine the 303 wants.
+    for (let k = 0; k < 4; k++) notes.push({ t: at + k, d: 0.25, m: 0, v: k % 2 ? 0.82 : 1, i: 'kick' });
+    notes.push({ t: at + 1, d: 0.25, m: 0, v: 0.75, i: 'clap' });
+    notes.push({ t: at + 3, d: 0.25, m: 0, v: 0.72, i: 'clap' });
+    for (let k = 0; k < 4; k++) {
+      notes.push({ t: at + k, d: 0.25, m: 0, v: 0.34, i: 'hat' });
+      notes.push({ t: at + k + 0.5, d: 0.25, m: 0, v: 0.4, i: 'openhat' });
+    }
+    if (inTune && tuneBar >= 8) for (const o of [0.25, 0.75, 1.25, 1.75, 2.25, 2.75, 3.25]) notes.push({ t: at + o, d: 0.2, m: 0, v: 0.16, i: 'hat' });
+    // The pedal: two long notes a bar, then a run of sixteenths once the tune is up.
+    if (tuneBar >= 8) for (let k = 0; k < 16; k++) notes.push({ t: at + k * 0.25, d: 0.22, m: root, v: k % 4 ? 0.42 : 0.62, i: 'reese' });
+    else {
+      notes.push({ t: at, d: 1.6, m: root, v: 0.7, i: 'reese' });
+      notes.push({ t: at + 2, d: 1.6, m: root, v: 0.62, i: 'reese' });
+    }
+    if (b >= introBars && (tuneBar + 1) % 8 == 0) for (let k = 0; k < 8; k++) notes.push({ t: at + 2 + k * 0.25, d: 0.2, m: 0, v: 0.2 + k * 0.06, i: 'snare2' });
+    if (inTune) for (const m of voicing(ch[tuneBar % ch.length], 62)) notes.push({ t: at, d: 3.8, m, v: 0.16, i: 'strings', pan: -0.12 });
+    // A rave stab on the turn of every eighth bar.
+    if (b >= introBars && tuneBar % 8 == 7) for (const m of voicing(ch[tuneBar % ch.length], 64)) notes.push({ t: at + 3.5, d: 0.4, m: m + 12, v: 0.4, i: 'stab', pan: 0.2 });
+  }
+  notes.push({ t: T0 + 32, d: 4, m: 0, v: 0.55, i: 'swell' });
+  notes.push(...moved(acid, T0));
+  notes.push({ t: T0 + 80, d: 3, m: 0, v: 0.45, i: 'swish' });
+
+  const trimmed = notes.filter((n) => n.t < beats - 0.001).map((n) => ({ ...n, d: Math.min(n.d, beats - n.t) }));
+  return { bpm: 130, loopBeats: beats, beats, swing: 0.5, notes: trimmed, reverb: 0.18 };
+}
 
 /** "Popcorn", as a mid-tempo swing for vibes and a Rhodes trio. Two choruses, looped. */
 export function mainTheme(): Cue {

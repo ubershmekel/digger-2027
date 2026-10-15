@@ -1,5 +1,5 @@
-// Nobbins and Hobbins: spawning, chase AI, transformation and death.
-// Ported from Monster.js.
+// Nobbins, Hobbins and the room Warden: spawning, chase AI, transformation and death.
+// Ported from Monster.js; the Warden is this remake's addition.
 import type { Game } from './game';
 import { reversedir } from './digger';
 
@@ -21,9 +21,40 @@ export class MonsterData {
   flag = false;
   nob = false;
   alive = false;
+  /** Warden only: hits left before it dies. */
+  hp = 0;
+  /** Warden only: true while it is one of the room's end bosses. */
+  boss = false;
+  /** Warden only: ticks frozen after taking a hit. */
+  stun = 0;
+  /** Warden only: ticks left of its charge (a burst of full-speed pursuit). */
+  charging = 0;
 }
 
 export type KillCause = 'shot' | 'eaten' | 'squashed' | 'grave';
+
+/** Every fifth room ends with a single big monster instead of a cherry. */
+export const BOSS_EVERY = 5;
+/** Hits it takes to bring a Warden down in its first room, plus one per ten rooms. */
+export function bossHealth(room: number): number {
+  return Math.min(6, 3 + Math.floor(room / 10));
+}
+export function isBossLevel(room: number): boolean {
+  return room >= BOSS_EVERY && room % BOSS_EVERY === 0;
+}
+
+/** Ticks the Warden freezes after each hit: long enough to line up the next shot. */
+const BOSS_HIT_STUN = 14;
+/** Ticks between charge telegraphs (13 Hz ticks, so roughly four seconds). */
+const BOSS_CHARGE_EVERY = 52;
+/** Ticks of full-speed pursuit once a charge fires. */
+const BOSS_CHARGE_TICKS = 18;
+/** Points for finishing a Warden, on top of the usual kill score. */
+export const BOSS_SCORE = 5000;
+/** Regular monsters sharing a boss room: a light escort, not a crowd. */
+function bossEscort(room: number): number {
+  return Math.max(1, Math.min(3, 1 + Math.floor(room / 10)));
+}
 
 export class Monster {
   mondat = [0, 1, 2, 3, 4, 5].map(() => new MonsterData());
@@ -34,6 +65,8 @@ export class Monster {
   mongaptime = 0;
   unbonusflag = false;
   mongotgold = false;
+  /** Warden state for the current room. `pending` keeps the room alive until it appears. */
+  boss = { pending: false, active: false, slot: -1, maxHp: 0, chargeIn: 0 };
 
   constructor(private readonly g: Game) {}
 
@@ -83,30 +116,43 @@ export class Monster {
         this.createmonster();
       if (this.unbonusflag && this.nextmonster == this.totalmonsters && this.nextmontime == 0)
         if (g.digger.digonscr) {
-          this.unbonusflag = false;
-          g.digger.createbonus();
+          if (this.boss.pending && !this.boss.active) {
+            /* The escort is out; the Warden takes the field instead of the cherry. */
+            if (this.spawnboss()) this.unbonusflag = false;
+          } else {
+            this.unbonusflag = false;
+            g.digger.createbonus();
+          }
         }
     }
+    /* The original turns Nobbins into Hobbins as the counter climbs; the opening
+       rooms hold them back so a first game is not a digging contest. */
+    const hobbinAt = g.main.levof10() <= 2 ? 99 : 10 - g.main.levof10();
     for (let i = 0; i < 6; i++) {
       const m = this.mondat[i];
       if (m.flag) {
-        if (m.hnt > 10 - g.main.levof10()) {
+        if (!m.boss && m.hnt > hobbinAt) {
           if (m.nob) {
             m.nob = false;
             m.hnt = 0;
           }
         }
-        if (m.alive)
-          if (m.t == 0) {
+        if (m.alive) {
+          if (m.boss) this.bossbeat(m);
+          if (m.stun > 0) m.stun--;
+          else if (m.t == 0) {
             this.monai(i);
             if (g.main.randno(15 - g.main.levof10()) == 0 && m.nob) this.monai(i);
+            /* A charging Warden gets a second step, so it closes in at full speed. */
+            if (m.boss && m.charging > 0) this.monai(i);
           } else m.t--;
-        else this.mondie(i);
+        } else this.mondie(i);
       }
     }
   }
 
   erasemonsters(): void {
+    if (this.boss.active) this.g.drawing.outtext('      ', 236, 0, 3);
     for (let i = 0; i < 6; i++) if (this.mondat[i].flag) this.g.sprite.erasespr(i + 8);
   }
 
@@ -146,10 +192,24 @@ export class Monster {
 
   initmonsters(): void {
     const lev = this.g.main.levof10();
-    for (let i = 0; i < 6; i++) this.mondat[i].flag = false;
+    const room = this.g.main.levno();
+    for (let i = 0; i < 6; i++) {
+      const m = this.mondat[i];
+      m.flag = false;
+      m.boss = false;
+      m.hp = 0;
+      m.stun = 0;
+      m.charging = 0;
+    }
     this.nextmonster = 0;
     this.mongaptime = 45 - (lev << 1);
-    this.totalmonsters = lev + 5;
+    const bossRoom = isBossLevel(room);
+    this.boss.pending = bossRoom;
+    this.boss.active = false;
+    this.boss.slot = -1;
+    this.boss.maxHp = bossRoom ? bossHealth(room) : 0;
+    this.boss.chargeIn = 0;
+    this.totalmonsters = bossRoom ? bossEscort(room) : lev + 5;
     switch (lev) {
       case 1:
         this.maxmononscr = 3;
@@ -167,17 +227,111 @@ export class Monster {
       case 10:
         this.maxmononscr = 5;
     }
+    if (bossRoom) this.maxmononscr = Math.min(this.maxmononscr, 3);
     this.nextmontime = 10;
     this.unbonusflag = true;
   }
 
+  /**
+   * The room Warden: a slow, armoured monster that replaces the bonus cherry in
+   * every fifth room. It takes several hits, freezes between them, and telegraphs
+   * a charge before closing in — a bag dropped on it still kills it outright.
+   * @returns true when it took the field, false while every slot is busy.
+   */
+  private spawnboss(): boolean {
+    const slot = this.mondat.findIndex((m) => !m.flag);
+    if (slot < 0) return false;
+    const m = this.mondat[slot];
+    m.flag = true;
+    m.alive = true;
+    m.boss = true;
+    m.hp = this.boss.maxHp;
+    m.nob = true;
+    m.hnt = 0;
+    m.t = 0;
+    m.stun = BOSS_HIT_STUN;
+    m.charging = 0;
+    m.death = 0;
+    m.dtime = 0;
+    m.h = 14;
+    m.v = 0;
+    m.x = 292;
+    m.y = 18;
+    m.xr = 0;
+    m.yr = 0;
+    m.dir = 4;
+    m.hdir = 4;
+    m.stime = 5;
+    this.nextmonster++;
+    this.totalmonsters++;
+    this.boss.active = true;
+    this.boss.slot = slot;
+    this.boss.chargeIn = BOSS_CHARGE_EVERY;
+    this.g.sprite.movedrawspr(slot + 8, m.x, m.y);
+    this.g.emit({ type: 'bossSpawn', hp: m.hp, maxHp: this.boss.maxHp });
+    this.g.sound.soundexplode();
+    this.drawbosshud();
+    return true;
+  }
+
+  /** Runs the Warden's charge clock: telegraph, then a stretch of full-speed pursuit. */
+  private bossbeat(m: MonsterData): void {
+    if (m.charging > 0) {
+      m.charging--;
+      return;
+    }
+    if (this.boss.chargeIn > 0) {
+      this.boss.chargeIn--;
+      if (this.boss.chargeIn == 0) {
+        m.charging = BOSS_CHARGE_TICKS;
+        this.boss.chargeIn = BOSS_CHARGE_EVERY;
+        this.g.emit({ type: 'bossCharge', x: m.x, y: m.y });
+        this.g.sound.soundfall();
+      }
+    }
+  }
+
+  /** True while the active Warden is mid-charge, so the pace gate lets it through. */
+  bossCharging(): boolean {
+    const m = this.mondat[this.boss.slot];
+    return this.boss.active && m != null && m.charging > 0;
+  }
+
+  /** Classic mode has no room for a bar, so the hit points read out on the top line. */
+  private drawbosshud(): void {
+    const m = this.mondat[this.boss.slot];
+    const left = m && m.flag ? m.hp : 0;
+    this.g.drawing.outtext(left > 0 ? 'BOSS ' + left : '      ', 236, 0, 3);
+  }
+
   killmon(mon: number, cause: KillCause = 'shot'): void {
     const m = this.mondat[mon];
-    if (m.flag) {
-      this.g.emit({ type: 'monsterKilled', mon, x: m.x, y: m.y, nob: m.nob, cause });
-      m.flag = m.alive = false;
-      this.g.sprite.erasespr(mon + 8);
-      if (this.g.digger.bonusmode) this.totalmonsters++;
+    if (!m.flag) return;
+    /* A Warden shrugs off everything but a falling bag, which finishes it outright. */
+    if (m.boss && cause != 'squashed' && m.hp > 1) {
+      m.hp--;
+      m.stun = BOSS_HIT_STUN;
+      this.g.emit({ type: 'bossHit', mon, x: m.x, y: m.y, hp: m.hp, maxHp: this.boss.maxHp });
+      this.g.sound.soundeatm();
+      this.drawbosshud();
+      return;
+    }
+    const wasBoss = m.boss;
+    const x = m.x;
+    const y = m.y;
+    const maxHp = this.boss.maxHp;
+    this.g.emit({ type: 'monsterKilled', mon, x, y, nob: m.nob, cause });
+    m.flag = m.alive = false;
+    m.boss = false;
+    this.g.sprite.erasespr(mon + 8);
+    if (this.g.digger.bonusmode) this.totalmonsters++;
+    if (wasBoss) {
+      this.boss.active = false;
+      this.boss.pending = false;
+      this.boss.slot = -1;
+      this.g.scores.addscore(BOSS_SCORE);
+      this.g.emit({ type: 'bossKilled', x, y, maxHp });
+      this.drawbosshud();
     }
   }
 
@@ -423,7 +577,9 @@ export class Monster {
   }
 
   monleft(): number {
-    return this.nmononscr() + this.totalmonsters - this.nextmonster;
+    /* A Warden still to appear keeps its room alive. */
+    const waiting = this.boss.pending && !this.boss.active ? 1 : 0;
+    return this.nmononscr() + this.totalmonsters - this.nextmonster + waiting;
   }
 
   nmononscr(): number {

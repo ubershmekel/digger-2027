@@ -159,6 +159,96 @@ export const bass: Voice = (ctx, out, t, dur, midi, vel) => {
   thump.connect(bp).connect(tg).connect(out);
 };
 
+/**
+ * The tune's own voice, fattened up: three detuned pulse waves through a snappy
+ * lowpass. This is the PC speaker's square wave with a filter on it, which is what
+ * the 1983 tune is made of — asked for the 2027 reading of it.
+ */
+export const lead: Voice = (ctx, out, t, dur, midi, vel, pan = 0) => {
+  const f = mtof(midi);
+  const dest = panner(ctx, pan, out);
+  const off = t + dur * 0.88;
+  const end = off + 0.22;
+  // A fast upward blip at the attack: the synth "pew" the PC speaker could only hint at.
+  const blip = ctx.createOscillator();
+  const blipGain = gain(ctx);
+  blip.type = 'sawtooth';
+  blip.frequency.setValueAtTime(f * 0.7, t);
+  blip.frequency.exponentialRampToValueAtTime(f, t + 0.035);
+  blip.start(t);
+  blip.stop(t + 0.05);
+  blipGain.gain.setValueAtTime(0, t);
+  blipGain.gain.linearRampToValueAtTime(vel * 0.12, t + 0.004);
+  blipGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.05);
+  blip.connect(blipGain).connect(dest);
+  const lp = ctx.createBiquadFilter();
+  lp.type = 'lowpass';
+  lp.Q.value = 5;
+  lp.frequency.setValueAtTime(Math.min(8000, f * 9), t);
+  lp.frequency.setTargetAtTime(Math.min(5200, f * 4 + 500), t, 0.07);
+  const amp = gain(ctx);
+  adsr(amp.gain, t, 0.004, vel * 0.2, 0.7, vel * 0.15, off, 0.05);
+  lp.connect(amp).connect(dest);
+  for (const [det, v] of [
+    [1, 0.6],
+    [1.007, 0.34],
+    [0.993, 0.34],
+  ] as [number, number][]) {
+    osc(ctx, 'square', f * det, t, end - t)
+      .connect(gain(ctx, v))
+      .connect(lp);
+  }
+};
+
+/** Square-wave synth bass: short and punchy, with a click on the attack. */
+export const synthbass: Voice = (ctx, out, t, dur, midi, vel) => {
+  const f = mtof(midi);
+  const off = t + dur * 0.84;
+  const end = off + 0.18;
+  const lp = ctx.createBiquadFilter();
+  lp.type = 'lowpass';
+  lp.Q.value = 3.5;
+  lp.frequency.setValueAtTime(Math.min(2800, f * 7), t);
+  lp.frequency.setTargetAtTime(f * 2.6 + 140, t, 0.05);
+  const amp = gain(ctx);
+  adsr(amp.gain, t, 0.003, vel * 0.4, 0.32, vel * 0.16, off, 0.04);
+  lp.connect(amp).connect(out);
+  osc(ctx, 'square', f, t, end - t)
+    .connect(gain(ctx, 0.75))
+    .connect(lp);
+  osc(ctx, 'sawtooth', f * 0.5, t, end - t)
+    .connect(gain(ctx, 0.32))
+    .connect(lp);
+  const click = noise(ctx, t, 0.02);
+  const hp = ctx.createBiquadFilter();
+  hp.type = 'highpass';
+  hp.frequency.value = 1100;
+  const cg = gain(ctx);
+  cg.gain.setValueAtTime(vel * 0.05, t);
+  cg.gain.setTargetAtTime(0, t, 0.008);
+  click.connect(hp).connect(cg).connect(out);
+};
+
+/** Clap: a stack of short noise bursts, the classic machine clap. */
+export function clap(ctx: Ctx, out: AudioNode, t: number, vel: number, pan = 0): void {
+  const dest = panner(ctx, pan, out);
+  for (const [at, v] of [
+    [0, 1],
+    [0.008, 0.7],
+    [0.017, 0.45],
+  ] as [number, number][]) {
+    const n = noise(ctx, t + at, 0.16);
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 1500;
+    bp.Q.value = 0.8;
+    const g = gain(ctx);
+    g.gain.setValueAtTime(vel * 0.22 * v, t + at);
+    g.gain.setTargetAtTime(0.0001, t + at, 0.02);
+    n.connect(bp).connect(g).connect(dest);
+  }
+}
+
 /** Muted trumpet: a vibrato'd sawtooth through Harmon-mute-like formants. */
 export const trumpet: Voice = (ctx, out, t, dur, midi, vel, pan = 0) => {
   const f = mtof(midi);

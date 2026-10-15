@@ -1,6 +1,7 @@
 // HTML overlay: title menu, settings, pause, high scores, initials entry, HUD, toasts.
 import { DEFAULT_KEYS, type BindAction, type Settings } from '../storage/storage';
 import type { HighScore } from '../storage/storage';
+import { MAX_NAME, sanitizeName } from '../name';
 
 export type Screen = 'boot' | 'menu' | 'loading' | 'settings' | 'pause' | 'scores' | 'help' | 'initials' | null;
 
@@ -13,6 +14,8 @@ export interface UiCallbacks {
   toggleFullscreen(): void;
   /** Switches graphics and sound together between 2027 and 1983. */
   toggleEra(): void;
+  /** Steps to the next tune, as the pause menu's button does. */
+  nextTune(): void;
   resume(): void;
   quit(): void;
   settingsChanged(s: Settings, key: keyof Settings): void;
@@ -62,6 +65,7 @@ export class Ui {
   readonly root: HTMLElement;
   private panel: HTMLElement;
   private hud: HTMLElement;
+  private wardenEl: HTMLElement;
   private toastEl: HTMLElement;
   private skipEl: HTMLElement;
   private captionEl: HTMLElement;
@@ -84,7 +88,12 @@ export class Ui {
       <div class="hud-p hud-p1"><span class="hud-label">Score</span><span class="hud-score">0</span></div>
       <div class="hud-mid"><span class="hud-title">DIGGER <b>2027</b></span><span class="hud-level">Level 1</span><span class="hud-lives"></span></div>
       <div class="hud-p hud-p2" hidden><span class="hud-label">Player 2</span><span class="hud-score">0</span></div>
+      <div class="warden" hidden>
+        <span class="warden-name">The Warden</span>
+        <span class="warden-bar"><i></i><i></i><i></i><i></i><i></i><i></i></span>
+      </div>
     </div>`);
+    this.wardenEl = this.hud.querySelector<HTMLElement>('.warden')!;
     this.panel = h(`<div class="panel-wrap" hidden></div>`);
     this.toastEl = h(`<div class="toast" role="status" aria-live="polite"></div>`);
     this.skipEl = h(`<div class="skip-hint" hidden></div>`);
@@ -159,6 +168,21 @@ export class Ui {
 
   setHudVisible(on: boolean): void {
     this.hud.hidden = !on;
+  }
+
+  /**
+   * Shows the Warden's remaining hit points in the HUD. hp 0 hides the bar.
+   * @param hp hits the Warden has left
+   * @param maxHp hits it started the room with
+   */
+  setBossHealth(hp: number, maxHp: number): void {
+    const on = hp > 0 && maxHp > 0;
+    this.wardenEl.hidden = !on;
+    if (!on) return;
+    this.wardenEl.querySelectorAll<HTMLElement>('.warden-bar i').forEach((pip, i) => {
+      pip.hidden = i >= maxHp;
+      pip.classList.toggle('spent', i >= hp);
+    });
   }
 
   private hudKey = '';
@@ -304,6 +328,7 @@ export class Ui {
             <button class="primary" data-a="resume" autofocus>Resume</button>
             <button data-a="settings">Settings</button>
             <button data-a="help">How to Play</button>
+            <button data-a="nextTune">Next tune ▸</button>
             <button data-a="quit">Quit to Title</button>
           </nav>
         </div>`);
@@ -311,6 +336,7 @@ export class Ui {
           const a = (e.target as HTMLElement).closest<HTMLElement>('[data-a]')?.dataset.a;
           if (a == 'resume') this.cb.resume();
           else if (a == 'quit') this.cb.quit();
+          else if (a == 'nextTune') this.cb.nextTune();
           else if (a == 'settings' || a == 'help') this.show(a);
         });
         return el;
@@ -319,7 +345,7 @@ export class Ui {
         const list = this.scores();
         const rows = Array.from({ length: 10 }, (_, i) => {
           const e = list[i];
-          return `<li><span class="rank">${i + 1}</span><span class="ini">${esc(e?.initials ?? '...')}</span><span class="pts">${
+          return `<li><span class="rank">${i + 1}</span><span class="ini">${esc(e?.name ?? '...')}</span><span class="pts">${
             e ? e.score.toLocaleString() : '—'
           }</span></li>`;
         }).join('');
@@ -373,7 +399,7 @@ export class Ui {
     const list = this.scores();
     const rows = Array.from({ length: 10 }, (_, i) => {
       const e = list[i];
-      return `<li><span class="ini">${esc(e?.initials ?? '...')}</span><span class="pts">${e ? e.score.toLocaleString() : '0'}</span></li>`;
+      return `<li><span class="ini">${esc(e?.name ?? '...')}</span><span class="pts">${e ? e.score.toLocaleString() : '0'}</span></li>`;
     }).join('');
     return `<section class="menu-scores"><h3>High Scores</h3><ol>${rows}</ol></section>`;
   }
@@ -422,6 +448,13 @@ export class Ui {
           ${seg('audio', [
             ['hd', 'Jazz'],
             ['classic', 'PC speaker'],
+          ])}
+          <div class="row-label">Main theme · Popcorn <kbd>N</kbd></div>
+          ${seg('musicTheme', [
+            ['2027', 'Club'],
+            ['breaks', 'Drum & bass'],
+            ['acid', 'Acid'],
+            ['jazz', '1983 swing'],
           ])}
           <div class="row-label">Mute</div>
           ${seg('muted', [
@@ -480,6 +513,7 @@ export class Ui {
           <dl class="hotkeys">
             <dt>Esc / P</dt><dd>Pause and menu</dd>
             <dt>F2</dt><dd>Remastered ⇄ classic graphics</dd>
+            <dt>N / F3</dt><dd>Next tune: Digger 2027 → Popcorn swing → 1983 PC speaker</dd>
             <dt>F4</dt><dd>Jazz ⇄ PC-speaker sound</dd>
             <dt>M</dt><dd>Mute</dd>
             <dt>F</dt><dd>Fullscreen</dd>
@@ -581,36 +615,24 @@ export class Ui {
     const el = h(`<div class="panel initials">
       <h2>New High Score</h2>
       <p class="big-score"></p>
-      <p>Enter your initials</p>
-      <div class="ini-boxes"><span></span><span></span><span></span></div>
-      <input class="ini-input" maxlength="3" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="Initials" autofocus>
+      <p>Enter your name</p>
+      <input class="ini-input" maxlength="${MAX_NAME}" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="Your name" placeholder="YOUR NAME" autofocus>
+      <p class="ini-hint">Up to ${MAX_NAME} characters · letters, numbers, spaces</p>
       <nav class="buttons row"><button class="primary" data-a="ok">Save</button></nav>
     </div>`);
     const input = el.querySelector<HTMLInputElement>('input')!;
-    const boxes = el.querySelectorAll('.ini-boxes span');
-    const render = () => {
-      boxes.forEach((b, i) => {
-        b.textContent = this.initials[i] ?? '';
-        b.classList.toggle('cur', i == this.initials.length);
-      });
-      this.cb.typingInitials(this.initials);
-    };
     input.addEventListener('input', () => {
-      this.initials = input.value
-        .toUpperCase()
-        .replace(/[^A-Z0-9 ]/g, '')
-        .slice(0, 3);
+      this.initials = sanitizeName(input.value);
       input.value = this.initials;
-      render();
+      this.cb.typingInitials(this.initials);
     });
-    const done = () => this.cb.submitInitials(this.initials.trim() || '...');
+    const done = () => this.cb.submitInitials(this.initials || 'ANON');
     input.addEventListener('keydown', (e) => {
       if (e.key == 'Enter') done();
       e.stopPropagation();
     });
     el.querySelector('[data-a=ok]')!.addEventListener('click', done);
-    el.querySelector('.ini-boxes')!.addEventListener('click', () => input.focus());
-    render();
+    this.cb.typingInitials('');
     return el;
   }
 

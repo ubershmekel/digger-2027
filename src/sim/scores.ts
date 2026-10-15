@@ -76,14 +76,14 @@ export class Scores {
     this.addscore(250);
   }
 
-  showtable(table: { initials: string; score: number }[]): void {
+  showtable(table: { name: string; score: number }[]): void {
     const d = this.g.drawing;
     d.outtext('HIGH SCORES', 16, 25, 3);
     let col = 2;
     for (let i = 0; i < 10; i++) {
       const e = table[i];
-      const initials = (e?.initials ?? '...').toUpperCase().padEnd(3, ' ').slice(0, 3);
-      d.outtext(initials + '  ' + numtostring(e?.score ?? 0), 16, 31 + 13 * (i + 1), col);
+      const name = (e?.name ?? '...').toUpperCase().padEnd(12, ' ').slice(0, 12);
+      d.outtext(name + numtostring(e?.score ?? 0), 16, 31 + 13 * (i + 1), col);
       col = 1;
     }
   }

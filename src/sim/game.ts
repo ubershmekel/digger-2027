@@ -10,6 +10,7 @@ import { Scores } from './scores';
 import { Input } from './input';
 import { Sound, type SoundCmd } from './sound';
 import { Main, TICK_MS } from './main';
+import { MAX_NAME } from '../name';
 
 export { TICK_MS };
 
@@ -37,10 +38,14 @@ export type SimEvent =
   | { type: 'lifeStart'; player: number }
   | { type: 'levelDone'; level: number; player: number }
   | { type: 'gameOver'; player: number; score: number }
-  | { type: 'gameEnd' };
+  | { type: 'gameEnd' }
+  | { type: 'bossSpawn'; hp: number; maxHp: number }
+  | { type: 'bossHit'; mon: number; x: number; y: number; hp: number; maxHp: number }
+  | { type: 'bossCharge'; x: number; y: number }
+  | { type: 'bossKilled'; x: number; y: number; maxHp: number };
 
 export interface HighScoreEntry {
-  initials: string;
+  name: string;
   score: number;
 }
 
@@ -142,10 +147,16 @@ export class Game {
     this.pendingInitials = null;
   }
 
-  /** Echo the initials typed so far onto the classic screen. */
+  /** Echo the name typed so far onto the classic screen, centred under the prompt. */
   showInitials(s: string): void {
     if (this.scene != 'initials') return;
-    for (let i = 0; i < 3; i++) this.pc.gwrite(i * 24 + 128, 130, (s[i] ?? '_').toUpperCase(), 3);
+    const name = s.toUpperCase().slice(0, MAX_NAME);
+    const step = 14;
+    const startX = 160 - (MAX_NAME * step) / 2;
+    for (let i = 0; i < MAX_NAME; i++) {
+      const ch = i < name.length ? name[i] : i == name.length ? '_' : ' ';
+      this.pc.gwrite(startX + i * step, 130, ch, 3);
+    }
   }
 
   submitInitials(s: string): void {

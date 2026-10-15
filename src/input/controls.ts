@@ -3,7 +3,7 @@
 import type { Key } from '../sim/input';
 import { DEFAULT_KEYS, type BindAction } from '../storage/storage';
 
-export type UiAction = 'pause' | 'skip' |'toggleGraphics' | 'toggleSound' | 'mute' | 'fullscreen' | 'confirm' | 'back';
+export type UiAction = 'pause' | 'skip' |'toggleGraphics' | 'toggleSound' | 'nextTune' | 'mute' | 'fullscreen' | 'confirm' | 'back';
 
 export interface ControlsTarget {
   press(k: Key): void;
@@ -51,6 +51,14 @@ export class Controls {
     // Typing into a text field (initials) is never a game or shortcut key.
     if (e.target instanceof HTMLInputElement && e.target.type != 'range') return;
     const bound = this.map.get(e.code);
+    if (e.code == 'KeyN' && !bound) {
+      e.preventDefault();
+      if (!e.repeat) this.t.action('nextTune');
+    }
+    if (e.code == 'F3') {
+      e.preventDefault();
+      if (!e.repeat) this.t.action('nextTune');
+    }
     if (e.code == 'F2' || e.code == 'F4') {
       e.preventDefault();
       if (!e.repeat) this.t.action(e.code == 'F2' ? 'toggleGraphics' : 'toggleSound');

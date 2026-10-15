@@ -13,7 +13,8 @@
     "typecheck": "tsc --noEmit",
     "lint": "oxlint --deny-warnings src tests tools public/sw.js",
     "extract": "node tools/extract-data.mjs",
-    "share-card": "node tools/make-share-card.mjs"
+    "share-card": "node tools/make-share-card.mjs",
+    "music": "mkdir -p tmp/music && rolldown tools/music/render-track.ts -o tmp/music/render-track.mjs --format esm --platform node && for t in 2027 breaks acid; do node tmp/music/render-track.mjs $t tmp/music/digger-$t.wav && ffmpeg -y -v error -i tmp/music/digger-$t.wav -c:a libopus -b:a 128k -application audio public/audio/digger-$t.opus; done"
   },
   "dependencies": {
     "three": "^0.186.1"

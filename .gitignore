@@ -9,3 +9,6 @@ old/
 .claude/
 test-results/
 playwright-report/
+
+# Scratch from the local tooling (rendered audio, bundles)
+tmp/

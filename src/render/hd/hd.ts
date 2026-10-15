@@ -17,6 +17,7 @@ import {
   emeraldMaterial,
   goldMaterial,
   makeBag,
+  makeWarden,
   makeCherry,
   makeDigger,
   makeGold,
@@ -24,6 +25,7 @@ import {
   makeHobbin,
   makeNobbin,
   type BagModel,
+  type WardenModel,
   type DiggerModel,
   type GoldModel,
   type Materials,
@@ -67,6 +69,8 @@ const entrance = (age: number, len = 0.45) => Math.max(0.001, easeOutBack(Math.m
 interface MonsterState {
   nob: NobbinModel;
   hob: HobbinModel;
+  /** The room Warden, shown instead of the other two when this slot is the boss. */
+  warden: WardenModel;
   /** 0 = Nobbin, 1 = Hobbin; animated through a squash-and-pop morph. */
   morph: number;
   face: number;
@@ -92,7 +96,7 @@ export class HdRenderer implements Renderer {
   readonly canvas: HTMLCanvasElement;
   private renderer: THREE.WebGLRenderer;
   private scene = new THREE.Scene();
-  private camera = new THREE.PerspectiveCamera(30, 16 / 9, 1, 400);
+  private camera = new THREE.PerspectiveCamera(14, 16 / 9, 1, 400);
   private composer: EffectComposer;
   private bloom: UnrealBloomPass;
   private terrain: Terrain;
@@ -166,7 +170,9 @@ export class HdRenderer implements Renderer {
     this.renderer.toneMappingExposure = 1.05;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // PCFSoftShadowMap was removed in this Three release (it silently fell back and
+    // logged a warning); plain PCF with a larger map is crisper at the same cost.
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
 
     const pmrem = new THREE.PMREMGenerator(this.renderer);
     this.env = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
@@ -217,9 +223,10 @@ export class HdRenderer implements Renderer {
     for (let i = 0; i < 6; i++) {
       const nob = makeNobbin(this.mats);
       const hob = makeHobbin(this.mats);
-      nob.root.visible = hob.root.visible = false;
-      this.scene.add(nob.root, hob.root);
-      this.monsters.push({ nob, hob, morph: 0, face: 1, wasOn: false, squash: 0, lastX: 0, phase: Math.random() * 6, blink: 2 + Math.random() * 3, age: 9 });
+      const warden = makeWarden(this.mats);
+      nob.root.visible = hob.root.visible = warden.root.visible = false;
+      this.scene.add(nob.root, hob.root, warden.root);
+      this.monsters.push({ nob, hob, warden, morph: 0, face: 1, wasOn: false, squash: 0, lastX: 0, phase: Math.random() * 6, blink: 2 + Math.random() * 3, age: 9 });
     }
     for (let i = 0; i < 7; i++) {
       const bag = makeBag(this.mats);
@@ -278,7 +285,8 @@ export class HdRenderer implements Renderer {
     const rt = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: 4 });
     this.composer = new EffectComposer(this.renderer, rt);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
-    this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.5, 0.5, 0.9);
+    // Modest bloom: enough for the emerald and lamp glints, cheap enough to leave on.
+    this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.5, 0.45, 0.9);
     this.composer.addPass(this.bloom);
     this.composer.addPass(new OutputPass());
 
@@ -328,7 +336,9 @@ export class HdRenderer implements Renderer {
   resize(w: number, h: number, dpr: number): void {
     if (!w || !h) return;
     this.size = { w, h };
-    const ratio = this.quality == 'low' ? 1 : this.quality == 'medium' ? Math.min(dpr, 1.5) : Math.min(dpr, 2);
+    // Pixel ratio is the single biggest cost here: bloom and shadows both scale with
+    // it, and the diorama does not need native 2x to look sharp.
+    const ratio = this.quality == 'low' ? 1 : this.quality == 'medium' ? Math.min(dpr, 1.25) : Math.min(dpr, 1.5);
     this.renderer.setPixelRatio(ratio);
     this.renderer.setSize(w, h, false);
     this.composer.setPixelRatio(ratio);
@@ -438,6 +448,38 @@ export class HdRenderer implements Renderer {
       case 'monsterSpawn':
         this.dust.emit({ x: spriteCx(292), y: spriteCy(18), z: ACTOR_Z, count: 30, color: 0x88ff88, color2: 0x2a6a2a, speed: 3, life: 0.8, size: 0.6, drag: 3 });
         break;
+      case 'bossSpawn': {
+        const p = new THREE.Vector3(spriteCx(292), spriteCy(18), ACTOR_Z);
+        this.popups.title('The Warden', `Break through it ${e.maxHp} times`, 2.6);
+        this.dust.emit({ x: p.x, y: p.y, z: p.z, count: 70, color: 0xff8a4a, color2: 0x6b1f3a, speed: 6, life: 1, size: 0.75, drag: 2.5 });
+        this.sparks.emit({ x: p.x, y: p.y, z: p.z, count: 90, color: 0xffd36a, color2: 0xff4a1a, speed: 10, life: 0.9, size: 0.4, gravity: 10, drag: 2 });
+        this.flash = 1;
+        this.kick(0.4);
+        break;
+      }
+      case 'bossHit': {
+        const p = P(e.x, e.y);
+        this.sparks.emit({ x: p.x, y: p.y, z: p.z, count: 70, color: 0xffd36a, color2: 0xffffff, speed: 9, life: 0.7, size: 0.4, gravity: 8, drag: 2 });
+        this.flash = Math.max(this.flash, 0.7);
+        this.kick(0.3);
+        break;
+      }
+      case 'bossCharge': {
+        const p = P(e.x, e.y).add(new THREE.Vector3(0, 1.2, 0));
+        this.popups.score('CHARGE', p, true);
+        this.flash = Math.max(this.flash, 0.45);
+        this.kick(0.14);
+        break;
+      }
+      case 'bossKilled': {
+        const p = P(e.x, e.y);
+        this.sparks.emit({ x: p.x, y: p.y, z: p.z, count: 160, color: 0xffe08a, color2: 0xff4a1a, speed: 13, life: 1.3, size: 0.55, gravity: 6, drag: 1.6 });
+        this.coins.toss(p.x, p.y, p.z + 0.5, 24, p.y - 0.8, 1.1);
+        this.popups.score('Warden down  +5000', p.add(new THREE.Vector3(0, 1.3, 0)), true);
+        this.flash = 1;
+        this.kick(0.5);
+        break;
+      }
       case 'monsterKilled': {
         const p = P(e.x, e.y);
         this.lastPos.copy(p);
@@ -693,17 +735,25 @@ export class HdRenderer implements Renderer {
     for (let i = 0; i < 6; i++) {
       const st = this.monsters[i];
       const slot = 8 + i;
+      const warden = g.monster.mondat[i].boss;
       const on = g.sprite.sprenf[slot] && this.castOn(g, slot);
       const ch = g.sprite.sprch[slot];
       const { nob, hob } = st;
-      if (!on || ch < 69 || ch > 80) {
-        nob.root.visible = hob.root.visible = false;
+      if (!on || (!warden && (ch < 69 || ch > 80))) {
+        nob.root.visible = hob.root.visible = st.warden.root.visible = false;
         st.wasOn = false;
         continue;
       }
       const [sx, sy] = this.spritePos(f, slot);
       const x = spriteCx(sx);
       const y = spriteCy(sy);
+      if (warden) {
+        st.wasOn = true;
+        if (!f.paused) st.age += dt;
+        nob.root.visible = hob.root.visible = false;
+        this.updateWarden(st, g, i, x, y, dt);
+        continue;
+      }
       const hobbin = ch >= 73;
       const dying = ch == 72 || ch == 76 || ch == 80;
       if (!st.wasOn) {
@@ -781,6 +831,48 @@ export class HdRenderer implements Renderer {
           this.dust.emit({ x: x + st.face * 0.7, y, z: ACTOR_Z + 0.5, count: 2, color: this.theme?.light ?? 0x9a6a3a, color2: this.theme?.dark ?? 0x4a2a10, speed: 2, life: 0.5, size: 0.3, gravity: 9, drag: 1 });
       }
     }
+  }
+
+  /**
+   * Poses the room Warden: a giant crowned Nobbin, its eyes lit while it charges
+   * and dimmed while it is stunned between hits. Its motion follows the ordinary
+   * Nobbin, so it reads as the same creature grown large.
+   * @param st render state for this monster slot
+   * @param g the running sim
+   * @param i monster slot index
+   * @param x world x of the sprite
+   * @param y world y of the sprite
+   * @param dt seconds since the previous frame
+   */
+  private updateWarden(st: MonsterState, g: Game, i: number, x: number, y: number, dt: number): void {
+    const m = g.monster.mondat[i];
+    const w = st.warden;
+    const charging = m.charging > 0;
+    const stunned = m.stun > 0;
+    const pop = entrance(st.age, 0.7) * this.castExit;
+    st.phase += dt * (charging ? 20 : 7);
+    const bounce = Math.sin(st.phase * 2) * 0.05;
+    const scale = pop * 1.75;
+    w.root.visible = true;
+    w.root.position.set(x, y, ACTOR_Z);
+    w.root.scale.set(scale * (1 + bounce * 0.5), scale * (1 - bounce * 0.5), scale);
+    if (m.dir == 0) st.face = 1;
+    else if (m.dir == 4) st.face = -1;
+    w.root.rotation.y = damp(w.root.rotation.y, st.face > 0 ? 0.22 : -0.22, 8, dt);
+    w.body.scale.set(1 + bounce, 1 - bounce, 1 + bounce);
+    for (let k = 0; k < 2; k++) {
+      const side = k == 0 ? -1 : 1;
+      const step = Math.sin(st.phase + k * Math.PI);
+      w.legs[k].rotation.z = side * 0.45 + step * 0.3;
+      w.legs[k].position.y = -0.25 + Math.max(0, step) * 0.05;
+    }
+    // The eyes follow the digger, as every other monster's do.
+    const lx = THREE.MathUtils.clamp((spriteCx(g.sprite.sprx[0]) - x) * 0.03, -0.06, 0.06);
+    const ly = THREE.MathUtils.clamp((spriteCy(g.sprite.spry[0]) - y) * 0.03, -0.05, 0.05);
+    for (const p of w.pupils) p.position.set(lx, ly, 0.21 * 0.78);
+    for (const l of w.lids) l.rotation.x = -1.6 + (stunned ? 0.75 : 0) * 1.45;
+    w.eyesMat.emissiveIntensity = charging ? 3.4 + Math.sin(st.phase * 3) * 1.2 : stunned ? 0.8 : 1.9;
+    w.crown.rotation.y += (charging ? 4 : 0.6) * dt;
   }
 
   private updateBags(f: FrameInfo, dt: number): void {
@@ -1031,7 +1123,10 @@ export class HdRenderer implements Renderer {
     // 1983 screen sits, and leave the spare height below it for the thumbs.
     const halfH = dist * Math.tan(fov / 2);
     const cy = Math.min((top + bottom) / 2, top - halfH + (20 * 2 * halfH) / viewH);
-    const tilt = THREE.MathUtils.degToRad(7);
+    // A gentler look: near-orthographic framing keeps the diorama readable as a
+    // playfield instead of a wide-angle shot, and costs less to render than 2x DPR.
+    // Straight on: the 1983 playfield is a flat side view, not a wide-angle shot.
+    const tilt = 0;
     let tx = 0;
     let ty = cy;
     // Ease in toward the Digger while it dies, and a little for its victory dance.
@@ -1052,8 +1147,8 @@ export class HdRenderer implements Renderer {
     let ox = 0;
     let oy = 0;
     if (!this.reducedMotion) {
-      ox = Math.sin(f.time * 0.21) * 0.25;
-      oy = Math.sin(f.time * 0.17) * 0.15;
+      ox = Math.sin(f.time * 0.21) * 0.02;
+      oy = Math.sin(f.time * 0.17) * 0.015;
       if (this.shake > 0) {
         ox += (Math.random() - 0.5) * this.shake;
         oy += (Math.random() - 0.5) * this.shake;

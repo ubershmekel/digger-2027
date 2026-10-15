@@ -9,6 +9,8 @@ import { Ui } from '../ui/ui';
 import { HighScores, loadSettings, maxLevelReached, recordLevel, saveSettings, type Quality, type Settings } from '../storage/storage';
 import type { SoundCmd } from '../sim/sound';
 import type { Key } from '../sim/input';
+import { sanitizeName } from '../name';
+import type { MusicTheme } from '../storage/storage';
 
 export class App {
   readonly settings: Settings = loadSettings();
@@ -37,6 +39,7 @@ export class App {
   private skipArmedAt = -1;
   private skippableSince = 0;
   private wasSkippable = false;
+  private lastUiScreen: string | null | undefined = undefined;
 
   constructor(root: HTMLElement) {
     this.stage = document.createElement('div');
@@ -79,6 +82,7 @@ export class App {
       typingInitials: (s) => this.game.showInitials(s),
       unlock: () => this.unlockAudio(),
       skipWait: () => this.skipMusicWait?.(),
+      nextTune: () => this.nextTune(),
     });
 
     const app = this;
@@ -151,6 +155,9 @@ export class App {
       case 'fullscreen':
         this.toggleFullscreen();
         break;
+      case 'nextTune':
+        this.nextTune();
+        break;
       case 'mute':
         this.settings.muted = !this.settings.muted;
         this.applySetting(this.settings, 'muted');
@@ -189,6 +196,29 @@ export class App {
   }
 
   /** Graphics decide the direction; the sound style goes along with them. */
+  /**
+   * F3, N, or the pause menu's Next tune button: step through every tune the game can
+   * play — the three dance readings of the 1983 tune, the jazz trio, then the original
+   * PC-speaker tunes — and remember where it stopped.
+   */
+  private nextTune(): void {
+    const s = this.settings;
+    const order: { audio: 'hd' | 'classic'; theme?: MusicTheme; label: string }[] = [
+      { audio: 'hd', theme: '2027', label: '♪ Digger 2027: club mix' },
+      { audio: 'hd', theme: 'breaks', label: '♪ Digger 2027: drum and bass' },
+      { audio: 'hd', theme: 'acid', label: '♪ Digger 2027: acid' },
+      { audio: 'hd', theme: 'jazz', label: '♪ Popcorn: 1983 swing' },
+      { audio: 'classic', label: '♪ Sound: 1983 PC speaker, original tunes' },
+    ];
+    const at = order.findIndex((o) => o.audio == s.audio && (o.audio == 'classic' || o.theme == s.musicTheme));
+    const next = order[(at + 1) % order.length];
+    s.audio = next.audio;
+    if (next.theme) s.musicTheme = next.theme;
+    this.applySetting(s, 'audio');
+    this.applySetting(s, 'musicTheme');
+    this.ui.toast(next.label);
+  }
+
   private toggleEra(): void {
     const mode = this.settings.graphics == 'hd' ? 'classic' : 'hd';
     this.settings.graphics = this.settings.audio = mode;
@@ -311,8 +341,9 @@ export class App {
 
   private submitInitials(s: string): void {
     const p = this.game.pendingInitials;
-    if (p) this.scores.add({ initials: s, score: p.score, date: new Date().toISOString() });
-    this.game.submitInitials(s);
+    const name = sanitizeName(s) || 'ANON';
+    if (p) this.scores.add({ name, score: p.score, date: new Date().toISOString() });
+    this.game.submitInitials(name);
     this.ui.show(null);
   }
 
@@ -328,7 +359,7 @@ export class App {
         // And retry on every later interaction until it is running (but not while paused).
         const retry = () => void this.audio?.unlock();
         for (const ev of ['pointerdown', 'touchend', 'keydown']) addEventListener(ev, retry, { capture: true, passive: true });
-        this.audio.setHdFactory(async (engine) => (await import('../audio/hd/jazz')).createJazz(engine));
+        this.audio.setHdFactory(async (engine, theme) => (await import('../audio/hd/jazz')).createJazz(engine, theme));
         this.applyVolumes();
         await this.audio.setMode(this.settings.audio, this.game.sound.tune);
       } catch (e) {
@@ -356,6 +387,9 @@ export class App {
         void this.audio?.setMode(s.audio, this.game.sound.tune);
         // Switching to PC-speaker sound needs no rendering: stop waiting for it.
         if (s.audio == 'classic') this.skipMusicWait?.();
+        break;
+      case 'musicTheme':
+        void this.audio?.setMusicTheme(s.musicTheme);
         break;
       case 'graphics':
         this.setGraphics(s.graphics);
@@ -486,7 +520,20 @@ export class App {
   private handleEvents(events: SimEvent[]): void {
     for (const e of events) {
       if (e.type == 'gameStart') this.wasInGame = true;
-      if (e.type == 'levelStart') recordLevel(e.level);
+      if (e.type == 'levelStart') {
+        recordLevel(e.level);
+        this.ui.setBossHealth(0, 0);
+      }
+      if (e.type == 'bossSpawn') {
+        this.ui.setBossHealth(e.hp, e.maxHp);
+        this.ui.toast('A Warden blocks the way');
+      }
+      if (e.type == 'bossHit') this.ui.setBossHealth(e.hp, e.maxHp);
+      if (e.type == 'bossKilled') {
+        this.ui.setBossHealth(0, 0);
+        this.ui.toast('Warden down  ·  +5000');
+      }
+      if (e.type == 'gameEnd') this.ui.setBossHealth(0, 0);
     }
   }
 
@@ -504,6 +551,12 @@ export class App {
     this.wasSkippable = g.skippable;
     if (!g.skippable || performance.now() - this.skipArmedAt > 2500) this.skipArmedAt = -1;
     this.ui.showSkipHint(g.skippable && this.ui.screen == null && !this.driver.paused, this.skipArmedAt > 0);
+    // Menus and the title screen get the ambient bed; the game gets the tune instead.
+    this.audio?.setAmbient(this.ui.menuOpen || g.scene == 'attract');
+    if (this.ui.screen != this.lastUiScreen) {
+      if (this.lastUiScreen !== undefined) this.audio?.uiSound('select');
+      this.lastUiScreen = this.ui.screen;
+    }
     // Touch controls only while actually playing, never over menus.
     this.touchEl?.classList.toggle('away', this.ui.menuOpen || !g.inGame || g.scene == 'initials');
     if (g.scene == 'play' && this.lastScene != 'play') this.playSince = performance.now();

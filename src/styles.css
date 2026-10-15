@@ -474,8 +474,10 @@ input[type='range']::-moz-range-thumb {
 }
 
 .table .ini {
-  letter-spacing: 0.3em;
+  letter-spacing: 0.08em;
   font-family: ui-monospace, 'Cascadia Mono', Menlo, monospace;
+  text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .table sup {
@@ -515,7 +517,7 @@ input[type='range']::-moz-range-thumb {
   color: var(--cherry);
 }
 
-/* --- Initials --------------------------------------------------------------- */
+/* --- Name entry ------------------------------------------------------------- */
 
 .big-score {
   font-size: 2.4rem;
@@ -525,35 +527,37 @@ input[type='range']::-moz-range-thumb {
   font-variant-numeric: tabular-nums;
 }
 
-.ini-boxes {
-  display: flex;
-  gap: 12px;
-  justify-content: center;
-  margin: 14px 0 4px;
-  cursor: text;
-}
-
-.ini-boxes span {
-  width: 58px;
-  height: 70px;
-  display: grid;
-  place-items: center;
-  font: 800 2.2rem ui-monospace, monospace;
-  border-radius: 10px;
-  background: rgba(0, 0, 0, 0.4);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-}
-
-.ini-boxes span.cur {
-  border-color: var(--gold);
-  box-shadow: 0 0 0 3px rgba(241, 185, 74, 0.2);
-}
-
 .ini-input {
-  position: absolute;
-  opacity: 0;
-  pointer-events: none;
-  width: 1px;
+  display: block;
+  width: min(440px, 92%);
+  margin: 16px auto 6px;
+  padding: 14px 18px;
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  font: 800 1.7rem ui-monospace, 'Cascadia Mono', Menlo, monospace;
+  color: var(--ink);
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid var(--panel-edge);
+  border-radius: var(--radius);
+  outline: none;
+  box-shadow: inset 0 2px 12px rgba(0, 0, 0, 0.5);
+}
+
+.ini-input::placeholder {
+  color: var(--ink-faint);
+  letter-spacing: 0.16em;
+}
+
+.ini-input:focus {
+  border-color: var(--gold);
+  box-shadow: inset 0 2px 12px rgba(0, 0, 0, 0.5), 0 0 0 3px rgba(241, 185, 74, 0.2);
+}
+
+.ini-hint {
+  font-size: 0.82rem;
+  color: var(--ink-faint);
+  margin: 0 0 6px;
 }
 
 /* --- HUD ---------------------------------------------------------------------- */
@@ -612,6 +616,61 @@ input[type='range']::-moz-range-thumb {
   letter-spacing: 0.3em;
   text-transform: uppercase;
   color: var(--ink-dim);
+}
+
+/* The Warden's hit points, under the level line. Hidden outside boss rooms. */
+.warden {
+  position: absolute;
+  left: 50%;
+  top: 96px;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  animation: warden-in 0.5s cubic-bezier(0.2, 1.5, 0.4, 1) both;
+}
+
+/* `display: flex` above would otherwise beat the [hidden] user-agent rule. */
+.warden[hidden] {
+  display: none;
+}
+
+.warden-name {
+  font-size: 0.72rem;
+  letter-spacing: 0.42em;
+  text-transform: uppercase;
+  color: #ffc9a0;
+  text-shadow: 0 0 14px rgba(255, 90, 60, 0.75);
+}
+
+.warden-bar {
+  display: flex;
+  gap: 5px;
+}
+
+.warden-bar i {
+  width: 26px;
+  height: 9px;
+  border-radius: 3px;
+  background: linear-gradient(180deg, #ff8a5c, #d02a1c);
+  box-shadow: 0 0 12px rgba(255, 80, 50, 0.65), inset 0 -2px 0 rgba(0, 0, 0, 0.35);
+}
+
+.warden-bar i.spent {
+  background: rgba(255, 255, 255, 0.12);
+  box-shadow: none;
+}
+
+@keyframes warden-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) scale(0.7);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) scale(1);
+  }
 }
 
 .hud-lives {

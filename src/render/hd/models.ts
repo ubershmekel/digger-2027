@@ -335,6 +335,59 @@ export function makeHobbin(m: Materials): HobbinModel {
 }
 
 // -----------------------------------------------------------------------------
+// The Warden (every fifth room's end boss)
+
+export interface WardenModel {
+  root: THREE.Group;
+  body: THREE.Mesh;
+  bodyMat: THREE.MeshPhysicalMaterial;
+  eyes: THREE.Group[];
+  pupils: THREE.Mesh[];
+  lids: THREE.Mesh[];
+  legs: THREE.Group[];
+  /** Gold spikes on its head; spins slowly, and whips around while charging. */
+  crown: THREE.Group;
+  /** Its own eye material, lit up on a hit and while charging. */
+  eyesMat: THREE.MeshStandardMaterial;
+}
+
+/**
+ * A giant crowned Nobbin. Deliberately the same silhouette the player already
+ * reads as a monster, in its own colours, so the end boss still looks like this
+ * game rather than a new creature. Each call gets its own materials, so tinting
+ * the Warden leaves the ordinary Nobbins alone.
+ * @param m shared materials (environment map)
+ */
+export function makeWarden(m: Materials): WardenModel {
+  const nob = makeNobbin(m);
+  nob.bodyMat.color.set(0x6e2bd6);
+  nob.bodyMat.sheenColor.set(0x8a5cff);
+  nob.bodyMat.emissive.set(0x1a0630);
+  const eyesMat = std({ color: 0xffe0b0, emissive: new THREE.Color(0xff6a1a), emissiveIntensity: 1.8, roughness: 0.4 });
+  for (const e of nob.eyes) {
+    (e.children[0] as THREE.Mesh).material = eyesMat;
+    e.scale.setScalar(1.15);
+  }
+  const gold = std({ color: 0xf1b94a, roughness: 0.28, metalness: 0.65, envMap: m.env, envMapIntensity: 0.8 });
+  const crown = new THREE.Group();
+  for (let k = 0; k < 5; k++) {
+    const spike = new THREE.Mesh(new THREE.ConeGeometry(0.075, 0.3, 8), gold);
+    spike.position.set((k - 2) * 0.15, 0.52 - Math.abs(k - 2) * 0.02, 0.06);
+    spike.rotation.z = (k - 2) * -0.22;
+    crown.add(spike);
+  }
+  const band = new THREE.Mesh(new THREE.TorusGeometry(0.3, 0.035, 8, 24), gold);
+  band.rotation.x = Math.PI / 2;
+  band.scale.set(1, 0.8, 1);
+  band.position.set(0, 0.44, 0.06);
+  crown.add(band);
+  crown.position.y = 0.06;
+  shadow(crown);
+  nob.root.add(crown);
+  return { ...nob, crown, eyesMat };
+}
+
+// -----------------------------------------------------------------------------
 // Gold bag and gold
 
 export interface BagModel {

@@ -1,10 +1,17 @@
 // Audio mixing: one AudioContext, master/music/sfx buses, and two swappable
 // backends that both consume the sim's sound commands.
 import type { SoundCmd } from '../sim/sound';
+import type { MusicTheme } from '../storage/storage';
 import speakerUrl from './classic/speaker.worklet.ts?worker&url';
 
 export interface AudioBackend {
   command(cmd: SoundCmd, arg: number): void;
+  /** Swap the main theme at the next opportunity (styles without themes ignore this). */
+  setMainTheme?(theme: MusicTheme): Promise<void>;
+  /** Menu bed on or off (styles without one ignore this). */
+  setAmbient?(on: boolean): void;
+  /** A soft blip for menu navigation. */
+  uiSound?(kind: 'move' | 'select'): void;
   /** Bring music back in line with the sim after a mode switch or a skip (-1 = silence),
    *  optionally starting `pos` melody-table steps in. */
   resync(tune: number, pos?: number | null): void;
@@ -25,7 +32,8 @@ export class AudioEngine {
   private backends: Partial<Record<'hd' | 'classic', AudioBackend>> = {};
   private mode: 'hd' | 'classic' = 'hd';
   private ready: Promise<void>;
-  private hdFactory: ((engine: AudioEngine) => Promise<AudioBackend>) | null = null;
+  private hdFactory: ((engine: AudioEngine, theme: MusicTheme) => Promise<AudioBackend>) | null = null;
+  private musicTheme: MusicTheme = '2027';
   /** The latest mode switch, which may still be loading the HD backend. */
   private switching: Promise<void> = Promise.resolve();
   private paused = false;
@@ -51,8 +59,18 @@ export class AudioEngine {
   }
 
   /** Registers the HD backend loader; it is created lazily the first time it is needed. */
-  setHdFactory(f: (engine: AudioEngine) => Promise<AudioBackend>): void {
+  setHdFactory(f: (engine: AudioEngine, theme: MusicTheme) => Promise<AudioBackend>): void {
     this.hdFactory = f;
+  }
+
+  /**
+   * Chooses which main theme the remastered soundtrack plays.
+   * @param theme '2027' for this remake's own hook, 'jazz' for the 1983 melody arranged
+   * @returns resolves once the new theme is rendered and playing
+   */
+  async setMusicTheme(theme: MusicTheme): Promise<void> {
+    this.musicTheme = theme;
+    await this.backends.hd?.setMainTheme?.(theme);
   }
 
   /** Resumes the context unless the game deliberately paused it. */
@@ -84,7 +102,7 @@ export class AudioEngine {
       const f = this.hdFactory;
       this.hdFactory = null;
       try {
-        this.backends.hd = await f(this);
+        this.backends.hd = await f(this, this.musicTheme);
       } catch (e) {
         console.warn('HD audio unavailable, using classic', e);
       }
@@ -108,6 +126,16 @@ export class AudioEngine {
 
   resync(tune: number): void {
     this.active?.resync(tune);
+  }
+
+  /** Starts or stops the menu ambience on the active backend. */
+  setAmbient(on: boolean): void {
+    this.active?.setAmbient?.(on);
+  }
+
+  /** Plays a menu navigation blip, if the active backend has one. */
+  uiSound(kind: 'move' | 'select'): void {
+    this.active?.uiSound?.(kind);
   }
 
   setPaused(paused: boolean): void {

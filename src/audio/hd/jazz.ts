@@ -3,7 +3,8 @@
 import type { SoundCmd } from '../../sim/sound';
 import type { AudioBackend, AudioEngine } from '../engine';
 import { EMERALD_FREQS, PIT_HZ } from '../tunes';
-import { bonusTheme, dirge, levelDone, mainTheme, type Cue, type Inst } from './compose';
+import { bonusTheme, dirge, levelDone, mainTheme, mainTheme2027, mainThemeAcid, mainThemeBreaks, type Cue, type Inst } from './compose';
+import type { MusicTheme } from '../../storage/storage';
 import * as I from './instruments';
 
 type CueId = 'main' | 'bonus' | 'dirge' | 'levdone';
@@ -17,14 +18,26 @@ const LEVELS: Record<Inst, number> = {
   piano: 1,
   ride: 0.9,
   hat: 0.8,
+  openhat: 0.7,
   brush: 0.9,
   swish: 0.9,
   snare: 0.8,
   kick: 0.9,
   swell: 1,
+  lead: 0.85,
+  synthbass: 0.9,
+  clap: 0.9,
+  // The newer themes are played from their rendered tracks; these are the levels the
+  // browser-synthesized fallback uses, which stands in for instruments it does not
+  // have (a reese or a 303 borrows the synth bass, a tight kick the club kick).
+  reese: 0.9,
+  acid: 0.85,
+  stab: 0.7,
+  kick2: 0.9,
+  snare2: 0.8,
 };
 
-const DRUMS: ReadonlySet<Inst> = new Set<Inst>(['ride', 'hat', 'brush', 'swish', 'snare', 'kick']);
+const DRUMS: ReadonlySet<Inst> = new Set<Inst>(['ride', 'hat', 'openhat', 'brush', 'swish', 'snare', 'snare2', 'kick', 'kick2', 'clap']);
 const drumCache = new Map<string, Promise<AudioBuffer>>();
 
 /** Renders one drum hit at full velocity; cue renders replay it, which is far cheaper than resynthesizing. */
@@ -36,9 +49,12 @@ function drumSample(i: Inst, sampleRate: number): Promise<AudioBuffer> {
     const out = ctx.destination;
     if (i == 'ride') I.ride(ctx, out, 0, 1);
     else if (i == 'hat') I.hat(ctx, out, 0, 1);
+    else if (i == 'openhat') I.hat(ctx, out, 0, 1, 0.42);
     else if (i == 'brush') I.brush(ctx, out, 0, 1);
     else if (i == 'swish') I.brush(ctx, out, 0, 1, true);
     else if (i == 'snare') I.snare(ctx, out, 0, 1);
+    else if (i == 'snare2' || i == 'kick2') (i == 'snare2' ? I.snare : I.kick)(ctx, out, 0, 1);
+    else if (i == 'clap') I.clap(ctx, out, 0, 1);
     else I.kick(ctx, out, 0, 1);
     p = ctx.startRendering();
     drumCache.set(key, p);
@@ -76,6 +92,9 @@ function renderVoice(i: Inst, d: number, m: number, v: number, pan: number | und
   else if (i == 'trumpet') I.trumpet(ctx, out, 0, d, m, v, pan);
   else if (i == 'strings') I.strings(ctx, out, 0, d, m, v, pan);
   else if (i == 'piano') I.piano(ctx, out, 0, d, m, v, pan);
+  else if (i == 'lead') I.lead(ctx, out, 0, d, m, v, pan);
+  else if (i == 'synthbass' || i == 'reese' || i == 'acid') I.synthbass(ctx, out, 0, d, m, v);
+  else if (i == 'stab') I.strings(ctx, out, 0, Math.min(d, 0.4), m, v, pan);
   else if (i == 'swell') I.swell(ctx, out, 0, d, v);
   return ctx.startRendering();
 }
@@ -150,7 +169,7 @@ export async function render(cue: Cue, sampleRate: number, onProgress?: (done: n
   const buses = sends.map(() => [new Float32Array(total), new Float32Array(total)]);
   let lastYield = performance.now();
   for (const [k, { n, t, rate, key, v }] of timed.entries()) {
-    const send = n.i == 'bass' || n.i == 'kick' ? 0 : n.i == 'ride' || n.i == 'hat' ? 1 : 2;
+    const send = n.i == 'bass' || n.i == 'kick' || n.i == 'kick2' ? 0 : n.i == 'ride' || n.i == 'hat' || n.i == 'openhat' ? 1 : 2;
     // Drums are rendered at full velocity; voices at a rounded one, so scale to the exact level.
     mixInto(buses[send], samples.get(key)!, Math.round(t * sampleRate), LEVELS[n.i] * (n.v / v), rate);
     // This runs on the main thread, possibly mid-game: never hold it for more than a few ms.
@@ -247,9 +266,36 @@ interface Playing {
 
 /** Tempo of the looping cues, so changes between them land on a beat. */
 const BPM: Partial<Record<CueId, number>> = { main: 168, bonus: 232 };
+/** Tempo of each reading of the main theme, so a change of tune lands on a beat. */
+const MAIN_BPM: Record<MusicTheme, number> = { '2027': 126, breaks: 174, acid: 130, jazz: 168 };
 /** Beats per melody-table step in the arrangements (see compose). */
 const STEP = 0.25;
+/** The pre-rendered tracks, written by tools/music/render-track.ts. */
+/** The arrangement behind each reading, played when there is no track or it will not decode. */
+const CUES: Record<MusicTheme, () => Cue> = {
+  '2027': mainTheme2027,
+  breaks: mainThemeBreaks,
+  acid: mainThemeAcid,
+  jazz: mainTheme,
+};
+
+/** The rendered track for a theme, where there is one. */
+const TRACKS: Partial<Record<MusicTheme, string>> = {
+  '2027': './audio/digger-2027.opus',
+  breaks: './audio/digger-breaks.opus',
+  acid: './audio/digger-acid.opus',
+};
+/** Playback trim for the track, so it matches the level of the rendered cues. */
+const TRACK_GAIN = 0.6;
 const TUNES: CueId[] = ['bonus', 'main', 'dirge'];
+
+/** Menu ambience: a slow four-chord bed in D minor, the key the tune is in. */
+const AMBIENT_CHORDS: number[][] = [
+  [50, 57, 65, 69],
+  [48, 55, 62, 67],
+  [46, 53, 60, 65],
+  [48, 55, 62, 69],
+];
 
 const hz = (div: number) => PIT_HZ / div;
 const ftom = (f: number) => 69 + 12 * Math.log2(f / 440);
@@ -270,8 +316,13 @@ class Jazz implements AudioBackend {
   private lastBonusPing = 0;
   private bonusPingHigh = false;
   private wobbleHigh = false;
+  private theme: MusicTheme;
+  private ambient: { gain: GainNode; timer: number } | null = null;
+  /** The main cue for the selected theme; both share a tempo so they can swap on a beat. */
+  private readonly mainCue = () => CUES[this.theme]();
 
-  constructor(engine: AudioEngine) {
+  constructor(engine: AudioEngine, theme: MusicTheme = '2027') {
+    this.theme = theme;
     this.ctx = engine.ctx;
     this.music = engine.music;
     // Effects get a little room so they sit with the music.
@@ -287,7 +338,7 @@ class Jazz implements AudioBackend {
   /** Bounces the cues in priority order. */
   async prepare(): Promise<void> {
     const order: [CueId, () => Cue][] = [
-      ['main', mainTheme],
+      ['main', this.mainCue],
       ['levdone', levelDone],
       ['dirge', dirge],
       ['bonus', bonusTheme],
@@ -305,7 +356,13 @@ class Jazz implements AudioBackend {
               this.onMainProgress?.(f);
             }
           : undefined;
-      p = render(make(), this.ctx.sampleRate, progress).then((b) => {
+      const bake = () => render(make(), this.ctx.sampleRate, progress);
+      // The 2027 theme ships pre-rendered, because a full club mix needs more
+      // arithmetic than a live graph can afford. The live render stays as the
+      // fallback wherever the track will not decode, and as the whole of the
+      // swing and bonus arrangements.
+      const job = id == 'main' && TRACKS[this.theme] ? this.track(progress).catch(bake) : bake();
+      p = job.then((b) => {
         this.buffers.set(id, b);
         if (this.wanted == id && this.playing?.id != id) this.start(id);
         return b;
@@ -315,14 +372,60 @@ class Jazz implements AudioBackend {
     return p;
   }
 
+  /** Fetches and decodes the pre-rendered track for the current theme. */
+  private async track(progress?: (f: number) => void): Promise<AudioBuffer> {
+    const url = TRACKS[this.theme]!;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
+    progress?.(0.55);
+    const buf = await this.ctx.decodeAudioData(await res.arrayBuffer());
+    // The file is a mastered mix, several decibels hotter than the cues rendered
+    // in the browser; trim it so the music sits where the others do.
+    for (let ch = 0; ch < buf.numberOfChannels; ch++) {
+      const d = buf.getChannelData(ch);
+      for (let i = 0; i < d.length; i++) d[i] *= TRACK_GAIN;
+    }
+    progress?.(1);
+    return buf;
+  }
+
   async whenReady(onProgress?: (f: number) => void): Promise<void> {
     onProgress?.(this.mainProgress);
     this.onMainProgress = onProgress ?? null;
     try {
-      await this.load('main', mainTheme);
+      await this.load('main', this.mainCue);
     } finally {
       this.onMainProgress = null;
     }
+  }
+
+  /**
+   * Swaps the main theme while the game is running: the old reading is dropped and the
+   * new one loads in its place. The other cues are untouched, so this costs one track
+   * rather than a whole soundtrack.
+   * @param theme the reading to play from now on
+   */
+  async setMainTheme(theme: MusicTheme): Promise<void> {
+    if (theme == this.theme) return;
+    const wasPlaying = this.wanted == 'main' || this.playing?.id == 'main';
+    this.theme = theme;
+    // The held buffer belongs to the old reading, and the two run at different tempos,
+    // so there is nothing to crossfade: stop it and let the new one come in.
+    this.buffers.delete('main');
+    this.pending.delete('main');
+    this.mainProgress = 0;
+    this.onMainProgress?.(0);
+    if (this.playing?.id == 'main') this.stopMusic(0.25);
+    if (!wasPlaying) return;
+    this.wanted = 'main';
+    // load() already falls back to rendering the cue in the browser; there is nothing
+    // further to try if even that fails, and the game still has its effects.
+    await this.load('main', this.mainCue).catch(() => {});
+  }
+
+  /** Tempo of a cue under the current theme. */
+  private tempoOf(id: CueId): number | undefined {
+    return id == 'main' ? MAIN_BPM[this.theme] : BPM[id];
   }
 
   private start(id: CueId, pos = 0): void {
@@ -331,8 +434,8 @@ class Jazz implements AudioBackend {
     // (at most a third of a second), so the band changes tune in time.
     let t = this.ctx.currentTime;
     const p = this.playing;
-    const bpm = p ? BPM[p.id] : undefined;
-    if (p && bpm && BPM[id] && buf) {
+    const bpm = p ? this.tempoOf(p.id) : undefined;
+    if (p && bpm && this.tempoOf(id) && buf) {
       const beat = 60 / bpm;
       const since = t - p.at;
       t = p.at + Math.ceil(since / beat + 0.05) * beat;
@@ -652,10 +755,51 @@ class Jazz implements AudioBackend {
 
   async musicPos(tune: number): Promise<number | null> {
     const p = this.playing;
-    const bpm = p && p.id == TUNES[tune] ? BPM[p.id] : undefined;
+    const bpm = p && p.id == TUNES[tune] ? this.tempoOf(p.id) : undefined;
     if (!p || !bpm) return null;
     const into = Math.max(0, this.ctx.currentTime - p.at) % p.src.buffer!.duration;
     return (into * bpm) / 60 / STEP;
+  }
+
+  /**
+   * The menu bed: slow string pads cycling four chords with the odd sparkle on top,
+   * routed through the music bus so the sliders and mute apply. Only the remastered
+   * sound has one — the 1983 PC-speaker style stays silent in menus, as it was.
+   * @param on true while a menu or the title screen is up
+   */
+  setAmbient(on: boolean): void {
+    if (on == !!this.ambient) return;
+    if (!on) {
+      const a = this.ambient;
+      this.ambient = null;
+      if (!a) return;
+      clearInterval(a.timer);
+      a.gain.gain.cancelScheduledValues(this.ctx.currentTime);
+      a.gain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.6);
+      setTimeout(() => a.gain.disconnect(), 2500);
+      return;
+    }
+    const ctx = this.ctx;
+    const bed = ctx.createGain();
+    bed.gain.value = 0;
+    bed.gain.setTargetAtTime(0.5, ctx.currentTime, 1.4);
+    bed.connect(this.music);
+    let step = 0;
+    const play = () => {
+      const t = ctx.currentTime + 0.12;
+      const chord = AMBIENT_CHORDS[step % AMBIENT_CHORDS.length];
+      step++;
+      for (const m of chord) I.strings(ctx, bed, t, 9, m, 0.5, ((m % 3) - 1) * 0.3);
+      I.rhodes(ctx, bed, t, 2.5, chord[0] - 12, 0.16, 0.1);
+      if (step % 2 == 0) I.vibes(ctx, bed, t + 3.6, 0.4, chord[2] + 12, 0.11, 0.35);
+    };
+    play();
+    this.ambient = { gain: bed, timer: setInterval(play, 8000) as unknown as number };
+  }
+
+  /** A soft blip for menu navigation; 'select' sits a fifth above 'move'. */
+  uiSound(kind: 'move' | 'select'): void {
+    I.vibes(this.ctx, this.sfx, this.ctx.currentTime + 0.01, 0.14, kind == 'select' ? 81 : 74, 0.16, kind == 'select' ? 0.1 : -0.1);
   }
 
   setPaused(): void {
@@ -663,14 +807,15 @@ class Jazz implements AudioBackend {
   }
 
   silence(): void {
+    this.setAmbient(false);
     this.wanted = null;
     this.stopMusic(0.15);
     this.stopLoops();
   }
 }
 
-export async function createJazz(engine: AudioEngine): Promise<AudioBackend> {
-  const j = new Jazz(engine);
+export async function createJazz(engine: AudioEngine, theme: MusicTheme = '2027'): Promise<AudioBackend> {
+  const j = new Jazz(engine, theme);
   void j.prepare();
   return j;
 }
